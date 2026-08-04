@@ -205,6 +205,9 @@ def test_manual_exception_only_updates_staff_without_qr_checkin():
     with TestClient(app) as client:
         csrf = login(client)
         create_attendance_session(client, csrf)
+        dashboard = client.get("/")
+        assert 'class="status-edit"' in dashboard.text
+        assert '<option value="sick_off">Sick off</option>' in dashboard.text
         with SessionLocal() as db:
             employee = db.scalar(select(Employee).where(Employee.employee_number == "NCC-1042"))
             employee_id = employee.id
@@ -217,6 +220,7 @@ def test_manual_exception_only_updates_staff_without_qr_checkin():
         with SessionLocal() as db:
             row = next(item for item in daily_roster(db, today()) if item["employee"].id == employee_id)
             assert row["status"] == "off_duty"
+            assert row["manual_editable"] is False
         duplicate = client.post(
             "/attendance/supervised",
             data={"employee_id": employee_id, "attendance_status": "absent", "reason": "Should not replace record", "csrf_token": csrf},
@@ -226,6 +230,65 @@ def test_manual_exception_only_updates_staff_without_qr_checkin():
         assert history.status_code == 200
         assert "off duty" in history.text
         assert "Generate daily staff report" in history.text
+
+
+def test_approved_sick_off_replaces_manual_absence():
+    with TestClient(app) as client:
+        csrf = login(client)
+        create_attendance_session(client, csrf)
+        with SessionLocal() as db:
+            employee = db.scalar(select(Employee).where(Employee.employee_number == "NCC-1187"))
+            employee_id = employee.id
+
+        manual = client.post(
+            "/attendance/supervised",
+            data={"employee_id": employee_id, "attendance_status": "absent", "reason": "Awaiting sick-off documentation", "csrf_token": csrf},
+            follow_redirects=False,
+        )
+        assert manual.status_code == 303
+        requested = client.post(
+            "/absences",
+            data={
+                "employee_id": employee_id,
+                "kind": "sick_off",
+                "start_date": today().isoformat(),
+                "end_date": today().isoformat(),
+                "return_date": (today() + timedelta(days=1)).isoformat(),
+                "reason": "Medical sick-off documentation received",
+                "csrf_token": csrf,
+            },
+            follow_redirects=False,
+        )
+        assert requested.status_code == 303
+        with SessionLocal() as db:
+            absence_request = db.scalar(select(AbsenceRequest))
+        approved = client.post(
+            f"/absences/{absence_request.id}/approve",
+            data={"csrf_token": csrf, "review_note": "Documentation verified"},
+            follow_redirects=False,
+        )
+        assert approved.status_code == 303
+        with SessionLocal() as db:
+            row = next(item for item in daily_roster(db, today()) if item["employee"].id == employee_id)
+            assert row["status"] == "sick_off"
+            assert row["manual_editable"] is False
+
+
+def test_manual_sick_off_status_is_supported():
+    with TestClient(app) as client:
+        csrf = login(client)
+        create_attendance_session(client, csrf)
+        with SessionLocal() as db:
+            employee_id = db.scalar(select(Employee).where(Employee.employee_number == "NCC-1042")).id
+        response = client.post(
+            "/attendance/supervised",
+            data={"employee_id": employee_id, "attendance_status": "sick_off", "reason": "Reported unwell before work", "csrf_token": csrf},
+            follow_redirects=False,
+        )
+        assert response.status_code == 303
+        with SessionLocal() as db:
+            row = next(item for item in daily_roster(db, today()) if item["employee"].id == employee_id)
+            assert row["status"] == "sick_off"
 
 
 def test_approved_leave_reconciles_roster():
