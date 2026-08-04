@@ -23,9 +23,10 @@ from .audit import record_audit
 from .auth import COOKIE_NAME, AuthContext, create_session as create_user_session, hash_password, optional_user, require_roles, require_user, verify_csrf, verify_password
 from .config import settings
 from .database import Base, SessionLocal, engine, get_db
-from .models import AccessRequest, AbsenceRequest, Attendance, AttendanceSession, AuditEvent, Document, Employee, ReminderDelivery, ReportRecord, User, UserSession, WorkLog
+from .importing import normalize_roster_status, parse_roster
+from .models import AccessRequest, AbsenceRequest, Attendance, AttendanceSession, AuditEvent, Document, DocumentClassification, Employee, EmployeeProfile, ReminderDelivery, ReportRecord, User, UserSession, WorkLog, WorkLogDetail, WorkPhoto
 from .notifications import process_leave_reminders
-from .reporting import ai_narrative, build_snapshot, deterministic_narrative
+from .reporting import ai_narrative, build_snapshot, deterministic_narrative, deterministic_recommendations
 from .services import dashboard_data, now, today
 
 
@@ -318,6 +319,8 @@ def submit_checkin(
 
 def normalized_phone(value: str) -> str:
     clean = re.sub(r"[^0-9+]", "", value)
+    if re.fullmatch(r"[17]\d{8}", clean):
+        clean = f"0{clean}"
     if not re.fullmatch(r"(?:\+254|0)\d{9}", clean):
         raise HTTPException(400, "Enter a valid Kenyan phone number")
     return clean
@@ -348,7 +351,7 @@ def supervised_attendance(
 
 @app.post("/employees")
 def add_employee(
-    request: Request, employee_number: str = Form(...), full_name: str = Form(...), phone: str = Form(...), email: str | None = Form(None), role: str = Form("Green Army Staff"), csrf_token: str = Form(...),
+    request: Request, employee_number: str = Form(...), full_name: str = Form(...), phone: str = Form(...), email: str | None = Form(None), role: str = Form("Green Army Staff"), residence: str = Form(""), roster_status: str = Form("on_duty"), csrf_token: str = Form(...),
     auth: AuthContext = Depends(require_roles("ward_officer", "system_admin")), db: Session = Depends(get_db),
 ):
     verify_csrf(auth, csrf_token)
@@ -358,6 +361,7 @@ def add_employee(
     db.add(item)
     try:
         db.flush()
+        db.add(EmployeeProfile(employee_id=item.id, residence=residence.strip()[:160] or None, roster_status=normalize_roster_status(roster_status), updated_at=now()))
         record_audit(db, request, "employee_created", "employee", item.id, auth.user.id)
         db.commit()
     except IntegrityError:
@@ -368,45 +372,106 @@ def add_employee(
 
 @app.post("/employees/import")
 async def import_employees(
-    request: Request, csv_file: UploadFile = File(...), csrf_token: str = Form(...),
+    request: Request, roster_file: UploadFile = File(...), csrf_token: str = Form(...),
     auth: AuthContext = Depends(require_roles("system_admin")), db: Session = Depends(get_db),
 ):
     verify_csrf(auth, csrf_token)
-    content = await csv_file.read(2 * 1024 * 1024 + 1)
-    if len(content) > 2 * 1024 * 1024:
-        raise HTTPException(400, "Employee CSV must be below 2 MB")
+    content = await roster_file.read(5 * 1024 * 1024 + 1)
+    if len(content) > 5 * 1024 * 1024:
+        raise HTTPException(400, "Staff roster must be below 5 MB")
     try:
-        rows = list(csv.DictReader(content.decode("utf-8-sig").splitlines()))
-    except UnicodeDecodeError:
-        raise HTTPException(400, "Employee CSV must use UTF-8 encoding")
-    required = {"employee_number", "full_name", "phone", "role"}
-    if not rows or not required.issubset(rows[0]):
-        raise HTTPException(400, "CSV requires employee_number, full_name, phone and role headers")
+        rows = parse_roster(content, roster_file.filename or "")
+    except (ValueError, UnicodeDecodeError, KeyError) as exc:
+        raise HTTPException(400, str(exc))
+    if not rows:
+        raise HTTPException(400, "Staff roster contains no data rows")
     if len(rows) > 5000:
         raise HTTPException(400, "Employee CSV cannot exceed 5,000 rows")
     seen: set[str] = set()
     created = updated = 0
     for number, row in enumerate(rows, start=2):
-        employee_number = row["employee_number"].strip().upper()
-        if not employee_number or employee_number in seen or len(row["full_name"].strip()) < 3:
+        employee_number = row.get("employee_number", "").strip().upper()
+        if not employee_number or len(employee_number) > 30 or employee_number in seen or len(row.get("full_name", "").strip()) < 3:
             raise HTTPException(400, f"Invalid or duplicate employee at CSV row {number}")
         seen.add(employee_number)
-        phone = normalized_phone(row["phone"])
+        try:
+            phone = normalized_phone(row.get("phone", ""))
+            roster_status = normalize_roster_status(row.get("status", ""))
+        except (ValueError, HTTPException) as exc:
+            detail = exc.detail if isinstance(exc, HTTPException) else str(exc)
+            raise HTTPException(400, f"Row {number}: {detail}")
         employee = db.scalar(select(Employee).where(Employee.employee_number == employee_number))
         if employee:
-            employee.full_name, employee.phone, employee.role = row["full_name"].strip()[:120], phone, row["role"].strip()[:80]
+            employee.full_name, employee.phone, employee.role = row["full_name"].strip()[:120], phone, row.get("role", "").strip()[:80] or employee.role
             employee.email = row.get("email", "").strip().lower() or None
+            employee.active = True
             updated += 1
         else:
-            db.add(Employee(employee_number=employee_number, full_name=row["full_name"].strip()[:120], phone=phone, email=row.get("email", "").strip().lower() or None, role=row["role"].strip()[:80]))
+            employee = Employee(employee_number=employee_number, full_name=row["full_name"].strip()[:120], phone=phone, email=row.get("email", "").strip().lower() or None, role=row.get("role", "").strip()[:80] or "Green Army Staff")
+            db.add(employee)
+            db.flush()
             created += 1
+        profile = employee.profile or EmployeeProfile(employee_id=employee.id, updated_at=now())
+        profile.residence = row["residence"].strip()[:160] or None
+        profile.roster_status = roster_status
+        profile.updated_at = now()
+        if not employee.profile:
+            db.add(profile)
     record_audit(db, request, "employees_imported", "employee", actor_user_id=auth.user.id, details=f"{created} created, {updated} updated")
     try:
         db.commit()
     except IntegrityError:
         db.rollback()
-        raise HTTPException(409, "CSV contains a phone or employee ID already assigned to another employee")
-    return RedirectResponse("/#staff", status_code=303)
+        raise HTTPException(409, "Roster contains a phone or employee ID already assigned to another employee")
+    return RedirectResponse("/employees", status_code=303)
+
+
+@app.get("/employees", response_class=HTMLResponse)
+def employees_page(request: Request, auth: AuthContext | None = Depends(optional_user), db: Session = Depends(get_db)):
+    if not auth:
+        return redirect_login()
+    if auth.user.role == "read_only":
+        raise HTTPException(403, "Benchmark accounts cannot access staff contact details")
+    employees = db.scalars(select(Employee).order_by(Employee.active.desc(), Employee.full_name)).all()
+    return templates.TemplateResponse(request=request, name="employees.html", context={"auth": auth, "csrf": auth.session.csrf_token, "employees": employees})
+
+
+@app.post("/employees/{employee_id}/edit")
+def edit_employee(
+    employee_id: int, request: Request, full_name: str = Form(...), employee_number: str = Form(...), phone: str = Form(...), residence: str = Form(""), roster_status: str = Form("on_duty"), csrf_token: str = Form(...),
+    auth: AuthContext = Depends(require_roles("ward_officer", "system_admin")), db: Session = Depends(get_db),
+):
+    verify_csrf(auth, csrf_token)
+    employee = db.get(Employee, employee_id)
+    if not employee or len(full_name.strip()) < 3:
+        raise HTTPException(404, "Employee not found")
+    employee.full_name, employee.employee_number, employee.phone = full_name.strip()[:120], employee_number.strip().upper()[:30], normalized_phone(phone)
+    profile = employee.profile or EmployeeProfile(employee_id=employee.id, updated_at=now())
+    profile.residence, profile.roster_status, profile.updated_at = residence.strip()[:160] or None, normalize_roster_status(roster_status), now()
+    if not employee.profile:
+        db.add(profile)
+    record_audit(db, request, "employee_updated", "employee", employee.id, auth.user.id)
+    try:
+        db.commit()
+    except IntegrityError:
+        db.rollback()
+        raise HTTPException(409, "Employee ID or phone already belongs to another employee")
+    return RedirectResponse("/employees", status_code=303)
+
+
+@app.post("/employees/{employee_id}/status")
+def change_employee_active_status(
+    employee_id: int, request: Request, active: bool = Form(...), csrf_token: str = Form(...),
+    auth: AuthContext = Depends(require_roles("ward_officer", "system_admin")), db: Session = Depends(get_db),
+):
+    verify_csrf(auth, csrf_token)
+    employee = db.get(Employee, employee_id)
+    if not employee:
+        raise HTTPException(404, "Employee not found")
+    employee.active = active
+    record_audit(db, request, "employee_reactivated" if active else "employee_deactivated", "employee", employee.id, auth.user.id)
+    db.commit()
+    return RedirectResponse("/employees", status_code=303)
 
 
 async def save_document(upload: UploadFile, absence_id: int, user_id: int) -> Document:
@@ -427,7 +492,7 @@ async def save_document(upload: UploadFile, absence_id: int, user_id: int) -> Do
 
 @app.post("/absences")
 async def create_absence(
-    request: Request, employee_id: int = Form(...), kind: str = Form(...), start_date: date = Form(...), end_date: date = Form(...), return_date: date = Form(...), reason: str = Form(""), planned: bool = Form(False), csrf_token: str = Form(...), medical_document: UploadFile | None = File(None),
+    request: Request, employee_id: int = Form(...), kind: str = Form(...), start_date: date = Form(...), end_date: date = Form(...), return_date: date = Form(...), reason: str = Form(""), planned: bool = Form(False), document_category: str = Form("other"), csrf_token: str = Form(...), supporting_document: UploadFile | None = File(None), medical_document: UploadFile | None = File(None),
     auth: AuthContext = Depends(require_roles("ward_officer", "hr_viewer", "system_admin")), db: Session = Depends(get_db),
 ):
     verify_csrf(auth, csrf_token)
@@ -445,8 +510,15 @@ async def create_absence(
     item = AbsenceRequest(employee_id=employee_id, kind=kind, start_date=start_date, end_date=end_date, return_date=return_date, reason=reason.strip(), status="planned" if planned else "submitted", submitted_by=auth.user.id, created_at=now())
     db.add(item)
     db.flush()
-    if medical_document and medical_document.filename:
-        db.add(await save_document(medical_document, item.id, auth.user.id))
+    upload = supporting_document if supporting_document and supporting_document.filename else medical_document
+    if upload and upload.filename:
+        allowed_categories = {"sick_sheet", "medical_certificate", "leave_form", "leave_approval", "return_to_work", "other"}
+        if document_category not in allowed_categories:
+            raise HTTPException(400, "Document category is invalid")
+        document = await save_document(upload, item.id, auth.user.id)
+        db.add(document)
+        db.flush()
+        db.add(DocumentClassification(document_id=document.id, category=document_category))
     record_audit(db, request, "absence_created", "absence_request", item.id, auth.user.id, f"Status {item.status}")
     db.commit()
     return RedirectResponse("/absences", status_code=303)
@@ -487,7 +559,8 @@ def download_document(document_id: int, request: Request, auth: AuthContext = De
     item = db.get(Document, document_id)
     if not item or not (settings.document_root / item.storage_key).is_file():
         raise HTTPException(404, "Document not found")
-    record_audit(db, request, "medical_document_downloaded", "document", item.id, auth.user.id)
+    category = item.classification.category if item.classification else "legacy_medical_document"
+    record_audit(db, request, "absence_document_downloaded", "document", item.id, auth.user.id, category)
     db.commit()
     return FileResponse(settings.document_root / item.storage_key, media_type=item.content_type, filename=item.original_filename, headers={"Cache-Control": "private, no-store"})
 
@@ -500,20 +573,63 @@ def work_logs_page(request: Request, auth: AuthContext | None = Depends(optional
     return templates.TemplateResponse(request=request, name="work_logs.html", context={"auth": auth, "csrf": auth.session.csrf_token, "items": items, "today": today()})
 
 
+async def save_work_photo(upload: UploadFile, work_log_id: int, user_id: int, caption: str | None) -> WorkPhoto:
+    content = await upload.read(settings.max_upload_bytes + 1)
+    if len(content) > settings.max_upload_bytes:
+        raise HTTPException(400, "Each field photo must be below 5 MB")
+    signatures = {b"\xff\xd8\xff": "image/jpeg", b"\x89PNG\r\n\x1a\n": "image/png"}
+    content_type = next((mime for signature, mime in signatures.items() if content.startswith(signature)), None)
+    if not content_type:
+        raise HTTPException(400, "Field photos must be genuine JPG or PNG images")
+    key = secrets.token_hex(24)
+    path = settings.document_root / key
+    path.write_bytes(content)
+    path.chmod(0o600)
+    return WorkPhoto(work_log_id=work_log_id, storage_key=key, original_filename=Path(upload.filename or "field-photo").name[:200], content_type=content_type, size_bytes=len(content), sha256=hashlib.sha256(content).hexdigest(), caption=caption.strip()[:240] if caption else None, uploaded_by=user_id, uploaded_at=now())
+
+
 @app.post("/work-logs")
-def create_work_log(
-    request: Request, work_date: date = Form(...), activity: str = Form(...), location: str = Form(...), description: str = Form(...), quantity: float | None = Form(None), unit: str | None = Form(None), staff_count: int = Form(0), challenges: str | None = Form(None), csrf_token: str = Form(...),
+async def create_work_log(
+    request: Request, work_date: date = Form(...), activity: str = Form(...), location: str = Form(...), description: str = Form(...), quantity: float | None = Form(None), unit: str | None = Form(None), staff_count: int = Form(0), challenges: str | None = Form(None), completion_status: str = Form("complete"), outstanding_work: str = Form(""), photo_caption: str = Form(""), csrf_token: str = Form(...), photos: list[UploadFile] = File(default=[]),
     auth: AuthContext = Depends(require_roles("ward_officer", "system_admin")), db: Session = Depends(get_db),
 ):
     verify_csrf(auth, csrf_token)
-    if min(len(activity.strip()), len(location.strip()), len(description.strip())) < 3 or quantity is not None and quantity < 0 or staff_count < 0:
+    if min(len(activity.strip()), len(location.strip()), len(description.strip())) < 3 or quantity is not None and quantity < 0 or staff_count < 0 or completion_status not in {"complete", "incomplete"}:
         raise HTTPException(400, "Work log details are invalid")
+    if completion_status == "incomplete" and len(outstanding_work.strip()) < 5:
+        raise HTTPException(400, "Describe the outstanding work for an incomplete activity")
+    photos = [photo for photo in photos if photo.filename]
+    if len(photos) > 8:
+        raise HTTPException(400, "A work log can contain at most 8 photos")
     item = WorkLog(work_date=work_date, activity=activity.strip()[:160], location=location.strip()[:160], description=description.strip(), quantity=quantity, unit=unit.strip()[:40] if unit else None, staff_count=staff_count, challenges=challenges.strip() if challenges else None, status="submitted", submitted_by=auth.user.id, created_at=now())
     db.add(item)
     db.flush()
-    record_audit(db, request, "work_log_submitted", "work_log", item.id, auth.user.id)
-    db.commit()
+    db.add(WorkLogDetail(work_log_id=item.id, completion_status=completion_status, outstanding_work=outstanding_work.strip() or None))
+    stored_paths: list[Path] = []
+    try:
+        for photo in photos:
+            stored = await save_work_photo(photo, item.id, auth.user.id, photo_caption)
+            stored_paths.append(settings.document_root / stored.storage_key)
+            db.add(stored)
+        record_audit(db, request, "work_log_submitted", "work_log", item.id, auth.user.id)
+        db.commit()
+    except Exception:
+        db.rollback()
+        for path in stored_paths:
+            path.unlink(missing_ok=True)
+        raise
     return RedirectResponse("/work-logs", status_code=303)
+
+
+@app.get("/work-photos/{photo_id}")
+def view_work_photo(photo_id: int, auth: AuthContext = Depends(require_user), db: Session = Depends(get_db)):
+    photo = db.get(WorkPhoto, photo_id)
+    path = settings.document_root / photo.storage_key if photo else None
+    if not photo or not path or not path.is_file():
+        raise HTTPException(404, "Field photo not found")
+    if hashlib.sha256(path.read_bytes()).hexdigest() != photo.sha256:
+        raise HTTPException(409, "Field photo integrity check failed")
+    return FileResponse(path, media_type=photo.content_type, headers={"Cache-Control": "private, max-age=300"})
 
 
 @app.post("/work-logs/{log_id}/{action}")
@@ -547,14 +663,19 @@ def report_preview(request: Request, start_date: date, end_date: date, kind: str
         snapshot = build_snapshot(db, start_date, end_date)
     except ValueError as exc:
         raise HTTPException(400, str(exc))
-    return templates.TemplateResponse(request=request, name="report_period.html", context={"auth": auth, "csrf": auth.session.csrf_token, "snapshot": snapshot, "narrative": deterministic_narrative(snapshot), "kind": kind, "record": None, "generated_at": now()})
+    return templates.TemplateResponse(request=request, name="report_period.html", context={"auth": auth, "csrf": auth.session.csrf_token, "snapshot": snapshot, "narrative": deterministic_narrative(snapshot), "recommendations": deterministic_recommendations(snapshot), "kind": kind, "record": None, "generated_at": now(), "signed_by": auth.user.display_name})
 
 
 @app.post("/reports/finalize")
-def finalize_report(request: Request, start_date: date = Form(...), end_date: date = Form(...), kind: str = Form(...), narrative: str = Form(...), csrf_token: str = Form(...), auth: AuthContext = Depends(require_roles("subcounty_reviewer", "system_admin")), db: Session = Depends(get_db)):
+def finalize_report(request: Request, start_date: date = Form(...), end_date: date = Form(...), kind: str = Form(...), narrative: str = Form(...), recommendations: str = Form(...), csrf_token: str = Form(...), auth: AuthContext = Depends(require_roles("subcounty_reviewer", "system_admin")), db: Session = Depends(get_db)):
     verify_csrf(auth, csrf_token)
     snapshot = build_snapshot(db, start_date, end_date)
-    item = ReportRecord(kind=kind, start_date=start_date, end_date=end_date, status="finalized", title=f"{kind.title()} Operations Report", narrative=narrative.strip() or deterministic_narrative(snapshot), snapshot_json=json.dumps(snapshot), created_by=auth.user.id, created_at=now())
+    generated_at = now()
+    snapshot["recommendations"] = recommendations.strip() or deterministic_recommendations(snapshot)
+    snapshot["signed_by"] = auth.user.display_name
+    snapshot["signed_title"] = "Ward Environment Officer" if auth.user.role == "system_admin" else auth.user.role.replace("_", " ").title()
+    snapshot["generated_at"] = generated_at.isoformat()
+    item = ReportRecord(kind=kind, start_date=start_date, end_date=end_date, status="finalized", title=f"{kind.title()} Operations Report", narrative=narrative.strip() or deterministic_narrative(snapshot), snapshot_json=json.dumps(snapshot), created_by=auth.user.id, created_at=generated_at)
     db.add(item)
     db.flush()
     record_audit(db, request, "report_finalized", "report", item.id, auth.user.id, f"{start_date} to {end_date}")
@@ -578,7 +699,8 @@ def saved_report(report_id: str, request: Request, auth: AuthContext | None = De
     item = db.get(ReportRecord, numeric_id)
     if not item:
         raise HTTPException(404, "Report not found")
-    return templates.TemplateResponse(request=request, name="report_period.html", context={"auth": auth, "csrf": auth.session.csrf_token, "snapshot": json.loads(item.snapshot_json), "narrative": item.narrative, "kind": item.kind, "record": item, "generated_at": item.created_at})
+    snapshot = json.loads(item.snapshot_json)
+    return templates.TemplateResponse(request=request, name="report_period.html", context={"auth": auth, "csrf": auth.session.csrf_token, "snapshot": snapshot, "narrative": item.narrative, "recommendations": snapshot.get("recommendations", "Not recorded"), "kind": item.kind, "record": item, "generated_at": item.created_at, "signed_by": snapshot.get("signed_by", "Ward Environment Officer"), "signed_title": snapshot.get("signed_title", "Ward Environment Officer")})
 
 
 @app.get("/reports/{report_id}.csv")
@@ -609,7 +731,7 @@ def generate_ai_draft(request: Request, start_date: date = Form(...), end_date: 
     narrative = ai_narrative(snapshot)
     record_audit(db, request, "report_narrative_drafted", "report", actor_user_id=auth.user.id, details="AI enabled" if settings.ai_enabled else "Deterministic fallback")
     db.commit()
-    return templates.TemplateResponse(request=request, name="report_period.html", context={"auth": auth, "csrf": auth.session.csrf_token, "snapshot": snapshot, "narrative": narrative, "kind": kind, "record": None, "generated_at": now()})
+    return templates.TemplateResponse(request=request, name="report_period.html", context={"auth": auth, "csrf": auth.session.csrf_token, "snapshot": snapshot, "narrative": narrative, "recommendations": deterministic_recommendations(snapshot), "kind": kind, "record": None, "generated_at": now(), "signed_by": auth.user.display_name})
 
 
 @app.post("/reminders/run")

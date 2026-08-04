@@ -51,6 +51,9 @@ def daily_roster(db: Session, work_date: date) -> list[dict]:
         elif absence:
             status = "sick_off" if absence.kind == "sick_off" else ("official_duty" if absence.kind == "official_duty" else "leave")
             detail = f"Returns {absence.return_date.strftime('%d %b')}"
+        elif employee.profile and employee.profile.roster_status == "annual_leave":
+            status = "leave"
+            detail = "Annual leave (staff roster)"
         else:
             status = "absent"
             detail = "No check-in"

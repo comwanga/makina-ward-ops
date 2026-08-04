@@ -1,6 +1,7 @@
 import os
 import re
 import tempfile
+from io import BytesIO
 from datetime import timedelta
 
 os.environ.setdefault("TZ", "Africa/Nairobi")
@@ -11,11 +12,12 @@ os.environ["APP_ENV"] = "development"
 
 from fastapi.testclient import TestClient
 from sqlalchemy import select
+from openpyxl import Workbook
 
 from app.database import Base, SessionLocal, engine, normalize_database_url
 from app.config import settings
 from app.main import app
-from app.models import AccessRequest, AbsenceRequest, Attendance, Document, Employee, ReminderDelivery, ReportRecord, User, WorkLog
+from app.models import AccessRequest, AbsenceRequest, Attendance, Document, Employee, ReminderDelivery, ReportRecord, User, WorkLog, WorkPhoto
 from app.notifications import process_leave_reminders
 from app.reporting import structured_ai_payload
 from app.services import daily_roster, today
@@ -246,8 +248,12 @@ def test_work_log_final_report_and_csv_are_stable():
                 "unit": "metres",
                 "staff_count": "6",
                 "challenges": "Heavy silt",
+                "completion_status": "incomplete",
+                "outstanding_work": "Complete the final twenty metres",
+                "photo_caption": "Drainage cleared near the market",
                 "csrf_token": csrf,
             },
+            files={"photos": ("field.jpg", b"\xff\xd8\xff\xe0field-photo", "image/jpeg")},
             follow_redirects=False,
         )
         assert work_response.status_code == 303
@@ -256,7 +262,7 @@ def test_work_log_final_report_and_csv_are_stable():
         client.post(f"/work-logs/{work.id}/approve", data={"csrf_token": csrf, "review_note": "Verified"})
         final = client.post(
             "/reports/finalize",
-            data={"start_date": today().isoformat(), "end_date": today().isoformat(), "kind": "daily", "narrative": "Verified daily report.", "csrf_token": csrf},
+            data={"start_date": today().isoformat(), "end_date": today().isoformat(), "kind": "daily", "narrative": "Verified daily report.", "recommendations": "Complete the remaining twenty metres.", "csrf_token": csrf},
             follow_redirects=False,
         )
         assert final.status_code == 303
@@ -267,6 +273,10 @@ def test_work_log_final_report_and_csv_are_stable():
             db.commit()
         saved = client.get(f"/reports/{report.id}")
         assert "Cleared blocked roadside drainage" in saved.text
+        assert "Complete the remaining twenty metres" in saved.text
+        assert "Makina Ward Officer" in saved.text
+        with SessionLocal() as db:
+            assert db.scalar(select(WorkPhoto))
         csv_response = client.get(f"/reports/{report.id}.csv")
         assert csv_response.status_code == 200
         assert "Employee ID" in csv_response.text
@@ -274,7 +284,7 @@ def test_work_log_final_report_and_csv_are_stable():
             assert db.get(ReportRecord, report.id).snapshot_json == snapshot_before
 
 
-def test_admin_can_create_user_and_import_staff_csv():
+def test_admin_can_create_user_and_import_staff_excel():
     with TestClient(app) as client:
         csrf = login(client)
         created = client.post(
@@ -283,16 +293,40 @@ def test_admin_can_create_user_and_import_staff_csv():
             follow_redirects=False,
         )
         assert created.status_code == 303
+        workbook = Workbook()
+        sheet = workbook.active
+        sheet.append(["Names", "Phone Numbers", "Pay Roll Numbers", "Status", "Residence"])
+        sheet.append(["Jane Example", "0711111111", "NCC-2001", "ANNUAL LEAVE", "Makina"])
+        excel = BytesIO()
+        workbook.save(excel)
         imported = client.post(
             "/employees/import",
             data={"csrf_token": csrf},
-            files={"csv_file": ("staff.csv", b"employee_number,full_name,phone,role,email\nNCC-2001,Jane Example,0711111111,Green Army Staff,jane@example.go.ke\n", "text/csv")},
+            files={"roster_file": ("staff.xlsx", excel.getvalue(), "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet")},
             follow_redirects=False,
         )
         assert imported.status_code == 303
         with SessionLocal() as db:
             assert db.scalar(select(User).where(User.email == "reviewer@example.go.ke"))
-            assert db.scalar(select(Employee).where(Employee.employee_number == "NCC-2001"))
+            employee = db.scalar(select(Employee).where(Employee.employee_number == "NCC-2001"))
+            employee_id = employee.id
+            assert employee.profile.residence == "Makina"
+            assert employee.profile.roster_status == "annual_leave"
+            roster_row = next(row for row in daily_roster(db, today()) if row["employee"].id == employee.id)
+            assert roster_row["status"] == "leave"
+        edited = client.post(
+            f"/employees/{employee_id}/edit",
+            data={"full_name": "Jane Wanjiku", "employee_number": "NCC-2001", "phone": "0711111111", "residence": "Laini Saba", "roster_status": "on_duty", "csrf_token": csrf},
+            follow_redirects=False,
+        )
+        assert edited.status_code == 303
+        deactivated = client.post(f"/employees/{employee_id}/status", data={"active": "false", "csrf_token": csrf}, follow_redirects=False)
+        assert deactivated.status_code == 303
+        with SessionLocal() as db:
+            employee = db.get(Employee, employee_id)
+            assert employee.full_name == "Jane Wanjiku"
+            assert employee.profile.residence == "Laini Saba"
+            assert employee.active is False
 
 
 def test_medical_document_is_private_and_reminders_are_idempotent():
