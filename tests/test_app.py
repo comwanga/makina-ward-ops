@@ -17,7 +17,8 @@ from openpyxl import Workbook
 from app.database import Base, SessionLocal, engine, normalize_database_url
 from app.config import settings
 from app.main import app
-from app.models import AccessRequest, AbsenceRequest, Attendance, Document, Employee, ReminderDelivery, ReportRecord, User, WorkLog, WorkLogOperations, WorkPhoto, WorkPhotoStage
+from app.auth import SCOPES, has_scope
+from app.models import AccessRequest, AbsenceRequest, Attendance, Document, Employee, ReminderDelivery, ReportRecord, User, UserSession, WorkLog, WorkLogOperations, WorkPhoto, WorkPhotoStage
 from app.notifications import process_leave_reminders
 from app.reporting import sample_period_photos, structured_ai_payload
 from app.services import daily_roster, today
@@ -159,11 +160,85 @@ def test_owner_approves_read_only_signup():
         )
         assert visitor_login.status_code == 303
         assert "Read-only benchmark access" in visitor_client.get("/").text
+        with SessionLocal() as db:
+            visitor = db.scalar(select(User).where(User.email == "visitor@example.go.ke"))
+            assert visitor.permissions == "attendance,reports"
+            assert has_scope(visitor, "attendance")
+            assert not has_scope(visitor, "staff_register")
         forbidden = visitor_client.post(
             "/sessions",
             data={"activity": "Not allowed", "location": "Makina", "duration": "60", "csrf_token": "irrelevant"},
         )
         assert forbidden.status_code == 403
+
+
+def test_scoped_denial_request_and_revocation():
+    with TestClient(app) as owner_client:
+        csrf = login(owner_client)
+        registration = owner_client.get("/register")
+        register_csrf = re.search(r'name="register_csrf" value="([^"]+)"', registration.text).group(1)
+        owner_client.post(
+            "/register",
+            data={"display_name": "Benchmark Visitor", "email": "bench@example.go.ke", "password": "BenchPassword123!", "reason": "I want to benchmark ward reporting operations", "register_csrf": register_csrf},
+        )
+        with SessionLocal() as db:
+            access_request = db.scalar(select(AccessRequest).where(AccessRequest.email == "bench@example.go.ke"))
+        approved = owner_client.post(
+            f"/admin/access-requests/{access_request.id}/approve",
+            data={"csrf_token": csrf, "permissions": ["attendance", "reports"]},
+            follow_redirects=False,
+        )
+        assert approved.status_code == 303
+
+        visitor = TestClient(app)
+        assert visitor.post("/login", data={"email": "bench@example.go.ke", "password": "BenchPassword123!"}, follow_redirects=False).status_code == 303
+
+        denied = visitor.get("/employees")
+        assert denied.status_code == 200
+        assert "Access denied" in denied.text
+        assert "Staff register" in denied.text
+        denied_csrf = re.search(r'name="csrf_token" value="([^"]+)"', denied.text).group(1)
+        requested_upgrade = visitor.post(
+            "/access/request",
+            data={"csrf_token": denied_csrf, "scope": "staff_register", "reason": "Reviewing the staff register while benchmarking county operations"},
+        )
+        assert "sent to the system owner" in requested_upgrade.text
+        with SessionLocal() as db:
+            upgrade = db.scalar(select(AccessRequest).where(AccessRequest.target_user_id.is_not(None), AccessRequest.status == "pending"))
+            assert upgrade.requested_scope == "staff_register"
+            assert upgrade.target_user_id == db.scalar(select(User).where(User.email == "bench@example.go.ke")).id
+
+        approved_upgrade = owner_client.post(
+            f"/admin/access-requests/{upgrade.id}/approve",
+            data={"csrf_token": csrf, "permissions": ["attendance", "reports", "staff_register"]},
+            follow_redirects=False,
+        )
+        assert approved_upgrade.status_code == 303
+        assert "Amina Wanjiku" in visitor.get("/employees").text
+
+        with SessionLocal() as db:
+            bench_user = db.scalar(select(User).where(User.email == "bench@example.go.ke"))
+            assert bench_user.active is True
+            assert "staff_register" in bench_user.permissions
+            bench_id = bench_user.id
+        revoked = owner_client.post(
+            f"/admin/users/{bench_id}/status",
+            data={"csrf_token": csrf, "active": "false"},
+            follow_redirects=False,
+        )
+        assert revoked.status_code == 303
+        assert visitor.get("/", follow_redirects=False).status_code == 303
+        with SessionLocal() as db:
+            assert db.scalar(select(User).where(User.id == bench_id)).active is False
+            assert db.scalar(select(UserSession).where(UserSession.user_id == bench_id, UserSession.revoked_at.is_(None))) is None
+        restored = owner_client.post(
+            f"/admin/users/{bench_id}/status",
+            data={"csrf_token": csrf, "active": "true"},
+            follow_redirects=False,
+        )
+        assert restored.status_code == 303
+        with SessionLocal() as db:
+            assert db.scalar(select(User).where(User.id == bench_id)).active is True
 
 
 def test_csrf_is_required_for_privileged_changes():

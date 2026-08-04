@@ -20,9 +20,9 @@ from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 
 from .audit import record_audit
-from .auth import COOKIE_NAME, AuthContext, create_session as create_user_session, hash_password, optional_user, require_roles, require_user, verify_csrf, verify_password
+from .auth import COOKIE_NAME, SCOPES, AuthContext, create_session as create_user_session, hash_password, has_scope, optional_user, require_roles, require_user, verify_csrf, verify_password
 from .config import settings
-from .database import Base, SessionLocal, engine, get_db
+from .database import Base, SessionLocal, engine, get_db, run_migrations
 from .importing import normalize_roster_status, parse_roster
 from .models import AccessRequest, AbsenceRequest, Attendance, AttendanceSession, AuditEvent, Document, DocumentClassification, Employee, EmployeeProfile, ReminderDelivery, ReportRecord, User, UserSession, WorkLog, WorkLogDetail, WorkLogOperations, WorkPhoto, WorkPhotoStage
 from .notifications import process_leave_reminders
@@ -38,6 +38,7 @@ CHECKIN_ATTEMPTS: dict[str, tuple[int, object]] = {}
 
 def initialize_database() -> None:
     Base.metadata.create_all(engine)
+    run_migrations()
     with SessionLocal() as db:
         if settings.app_env == "development" and db.scalar(select(User.id).limit(1)) is None:
             db.add(
@@ -98,6 +99,14 @@ async def security_headers(request: Request, call_next):
 
 def redirect_login() -> RedirectResponse:
     return RedirectResponse("/login", status_code=303)
+
+
+def denied_response(request: Request, auth: AuthContext, scope: str, error: str | None = None, success: str | None = None):
+    return templates.TemplateResponse(
+        request=request,
+        name="denied.html",
+        context={"auth": auth, "csrf": auth.session.csrf_token, "scope": scope, "area_name": SCOPES.get(scope, scope.replace("_", " ").title()), "scopes": SCOPES, "error": error, "success": success},
+    )
 
 
 def owner_setup_available(db: Session) -> bool:
@@ -211,6 +220,34 @@ def logout(request: Request, csrf_token: str = Form(...), auth: AuthContext = De
     response = RedirectResponse("/login", status_code=303)
     response.delete_cookie(COOKIE_NAME)
     return response
+
+
+@app.post("/access/request", response_class=HTMLResponse)
+def request_scope_access(
+    request: Request, scope: str = Form(...), reason: str = Form(...), csrf_token: str = Form(...),
+    auth: AuthContext = Depends(require_user), db: Session = Depends(get_db),
+):
+    verify_csrf(auth, csrf_token)
+    if scope not in SCOPES or len(reason.strip()) < 10:
+        return denied_response(request, auth, scope, error="Choose a valid area and explain briefly why you need access")
+    existing = db.scalar(select(AccessRequest).where(AccessRequest.email == auth.user.email, AccessRequest.status == "pending"))
+    if existing:
+        return denied_response(request, auth, scope, error="You already have a pending access request awaiting the owner")
+    item = AccessRequest(
+        display_name=auth.user.display_name,
+        email=auth.user.email,
+        password_hash=auth.user.password_hash,
+        reason=reason.strip(),
+        status="pending",
+        requested_scope=scope,
+        target_user_id=auth.user.id,
+        created_at=now(),
+    )
+    db.add(item)
+    db.flush()
+    record_audit(db, request, "access_requested", "access_request", item.id, auth.user.id, f"Scope {scope}")
+    db.commit()
+    return denied_response(request, auth, scope, success=f"Your request for {SCOPES[scope]} was sent to the system owner.")
 
 
 @app.get("/", response_class=HTMLResponse)
@@ -369,6 +406,8 @@ def supervised_attendance(
 def attendance_history(request: Request, report_date: date | None = None, auth: AuthContext | None = Depends(optional_user), db: Session = Depends(get_db)):
     if not auth:
         return redirect_login()
+    if not has_scope(auth.user, "attendance"):
+        return denied_response(request, auth, "attendance")
     selected = report_date or today()
     data = dashboard_data(db, selected)
     roster_ids = {row["employee"].id for row in data["roster"]}
@@ -465,8 +504,8 @@ async def import_employees(
 def employees_page(request: Request, auth: AuthContext | None = Depends(optional_user), db: Session = Depends(get_db)):
     if not auth:
         return redirect_login()
-    if auth.user.role == "read_only":
-        raise HTTPException(403, "Benchmark accounts cannot access staff contact details")
+    if not has_scope(auth.user, "staff_register"):
+        return denied_response(request, auth, "staff_register")
     employees = db.scalars(select(Employee).order_by(Employee.active.desc(), Employee.full_name)).all()
     return templates.TemplateResponse(request=request, name="employees.html", context={"auth": auth, "csrf": auth.session.csrf_token, "employees": employees})
 
@@ -563,6 +602,8 @@ async def create_absence(
 def absences_page(request: Request, auth: AuthContext | None = Depends(optional_user), db: Session = Depends(get_db)):
     if not auth:
         return redirect_login()
+    if not has_scope(auth.user, "absences"):
+        return denied_response(request, auth, "absences")
     items = db.scalars(select(AbsenceRequest).order_by(AbsenceRequest.created_at.desc())).all()
     employees = db.scalars(select(Employee).where(Employee.active.is_(True)).order_by(Employee.full_name)).all()
     return templates.TemplateResponse(request=request, name="absences.html", context={"auth": auth, "csrf": auth.session.csrf_token, "items": items, "employees": employees})
@@ -604,6 +645,8 @@ def download_document(document_id: int, request: Request, auth: AuthContext = De
 def work_logs_page(request: Request, auth: AuthContext | None = Depends(optional_user), db: Session = Depends(get_db)):
     if not auth:
         return redirect_login()
+    if not has_scope(auth.user, "work_logs"):
+        return denied_response(request, auth, "work_logs")
     items = db.scalars(select(WorkLog).order_by(WorkLog.work_date.desc(), WorkLog.id.desc())).all()
     return templates.TemplateResponse(request=request, name="work_logs.html", context={"auth": auth, "csrf": auth.session.csrf_token, "items": items, "today": today()})
 
@@ -704,6 +747,8 @@ def work_log_action(log_id: int, action: str, request: Request, csrf_token: str 
 def reports_page(request: Request, auth: AuthContext | None = Depends(optional_user), db: Session = Depends(get_db)):
     if not auth:
         return redirect_login()
+    if not has_scope(auth.user, "reports"):
+        return denied_response(request, auth, "reports")
     records = db.scalars(select(ReportRecord).order_by(ReportRecord.created_at.desc())).all()
     return templates.TemplateResponse(request=request, name="reports.html", context={"auth": auth, "csrf": auth.session.csrf_token, "records": records, "today": today()})
 
@@ -712,6 +757,8 @@ def reports_page(request: Request, auth: AuthContext | None = Depends(optional_u
 def report_preview(request: Request, start_date: date, end_date: date, kind: str = "custom", auth: AuthContext | None = Depends(optional_user), db: Session = Depends(get_db)):
     if not auth:
         return redirect_login()
+    if not has_scope(auth.user, "reports"):
+        return denied_response(request, auth, "reports")
     try:
         snapshot = build_snapshot(db, start_date, end_date, kind)
     except ValueError as exc:
@@ -740,6 +787,8 @@ def finalize_report(request: Request, start_date: date = Form(...), end_date: da
 def saved_report(report_id: str, request: Request, auth: AuthContext | None = Depends(optional_user), db: Session = Depends(get_db)):
     if not auth:
         return redirect_login()
+    if not has_scope(auth.user, "reports"):
+        return denied_response(request, auth, "reports")
     if report_id.endswith(".csv"):
         try:
             return report_csv(int(report_id.removesuffix(".csv")), request, auth, db)
@@ -800,8 +849,8 @@ def run_reminders(request: Request, csrf_token: str = Form(...), auth: AuthConte
 def audit_page(request: Request, auth: AuthContext | None = Depends(optional_user), db: Session = Depends(get_db)):
     if not auth:
         return redirect_login()
-    if auth.user.role not in {"subcounty_reviewer", "system_admin"}:
-        raise HTTPException(403, "You do not have permission for this action")
+    if auth.user.role not in {"subcounty_reviewer", "system_admin"} or not has_scope(auth.user, "audit"):
+        return denied_response(request, auth, "audit")
     events = db.scalars(select(AuditEvent).order_by(AuditEvent.occurred_at.desc()).limit(250)).all()
     return templates.TemplateResponse(request=request, name="audit.html", context={"auth": auth, "csrf": auth.session.csrf_token, "events": events})
 
@@ -814,7 +863,7 @@ def users_page(request: Request, auth: AuthContext | None = Depends(optional_use
         raise HTTPException(403, "System administrator access is required")
     users = db.scalars(select(User).order_by(User.display_name)).all()
     access_requests = db.scalars(select(AccessRequest).order_by(AccessRequest.created_at.desc())).all()
-    return templates.TemplateResponse(request=request, name="users.html", context={"auth": auth, "csrf": auth.session.csrf_token, "users": users, "access_requests": access_requests})
+    return templates.TemplateResponse(request=request, name="users.html", context={"auth": auth, "csrf": auth.session.csrf_token, "users": users, "access_requests": access_requests, "scopes": SCOPES})
 
 
 @app.post("/admin/users")
@@ -840,26 +889,57 @@ def create_user(
 
 @app.post("/admin/access-requests/{request_id}/{action}")
 def review_access_request(
-    request_id: int, action: str, request: Request, csrf_token: str = Form(...), review_note: str = Form(""),
+    request_id: int, action: str, request: Request, csrf_token: str = Form(...), review_note: str = Form(""), permissions: list[str] = Form(default=[]),
     auth: AuthContext = Depends(require_roles("system_admin")), db: Session = Depends(get_db),
 ):
     verify_csrf(auth, csrf_token)
     item = db.get(AccessRequest, request_id)
     if not item or item.status != "pending" or action not in {"approve", "reject"}:
         raise HTTPException(404, "Pending access request not found")
+    if any(scope not in SCOPES for scope in permissions):
+        raise HTTPException(400, "One of the selected access areas is not recognised")
     if action == "approve":
-        if db.scalar(select(User.id).where(User.email == item.email)):
-            raise HTTPException(409, "An account with this email already exists")
-        user = User(email=item.email, display_name=item.display_name, password_hash=item.password_hash, role="read_only", active=True, must_change_password=False, created_at=now())
-        db.add(user)
-        db.flush()
+        granted = sorted({scope for scope in permissions if scope in SCOPES}) or ["attendance", "reports"]
+        permissions_csv = ",".join(granted)
+        target = db.get(User, item.target_user_id) if item.target_user_id else None
+        if target:
+            target.active = True
+            target.permissions = permissions_csv
+            user_id = target.id
+        else:
+            if db.scalar(select(User.id).where(User.email == item.email)):
+                raise HTTPException(409, "An account with this email already exists")
+            user = User(email=item.email, display_name=item.display_name, password_hash=item.password_hash, role="read_only", permissions=permissions_csv, active=True, must_change_password=False, created_at=now())
+            db.add(user)
+            db.flush()
+            user_id = user.id
         item.status = "approved"
-        details = f"Read-only user {user.id} created"
+        details = f"Access to {', '.join(SCOPES[scope] for scope in granted)}"
     else:
         item.status = "rejected"
         details = review_note.strip() or "Access declined"
     item.reviewed_by, item.reviewed_at, item.review_note = auth.user.id, now(), review_note.strip() or None
     record_audit(db, request, f"access_request_{item.status}", "access_request", item.id, auth.user.id, details)
+    db.commit()
+    return RedirectResponse("/admin/users", status_code=303)
+
+
+@app.post("/admin/users/{user_id}/status")
+def change_user_active_status(
+    user_id: int, request: Request, active: bool = Form(...), csrf_token: str = Form(...),
+    auth: AuthContext = Depends(require_roles("system_admin")), db: Session = Depends(get_db),
+):
+    verify_csrf(auth, csrf_token)
+    target = db.get(User, user_id)
+    if not target:
+        raise HTTPException(404, "User not found")
+    if target.id == auth.user.id:
+        raise HTTPException(400, "You cannot revoke your own access")
+    target.active = active
+    if not active:
+        for session in db.scalars(select(UserSession).where(UserSession.user_id == target.id, UserSession.revoked_at.is_(None))).all():
+            session.revoked_at = now()
+    record_audit(db, request, "user_access_revoked" if not active else "user_access_restored", "user", target.id, auth.user.id)
     db.commit()
     return RedirectResponse("/admin/users", status_code=303)
 

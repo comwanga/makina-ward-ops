@@ -9,8 +9,10 @@ Makina Ward Operations is a mobile-first workforce attendance and environment re
 ### Staff and access management
 
 - One-time system owner setup with a private Railway setup token.
-- Owner-controlled access requests and approval or rejection.
-- Read-only benchmark accounts that cannot change or export operational records.
+- Owner-controlled access requests with approval or rejection.
+- On approval the owner marks which areas each user can open (attendance, staff register, leave, daily work, reports, audit).
+- Read-only benchmark accounts cannot create, change, approve or export operational records.
+- The owner can revoke or restore an account's access at any time; revocation ends active sessions immediately.
 - Roles for system owners, ward officers, Sub County reviewers, HR viewers, and read-only visitors.
 - Staff creation, correction, deactivation, and reactivation without deleting historical records.
 - Excel and CSV roster imports that update existing Employee IDs and add new staff.
