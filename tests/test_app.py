@@ -13,8 +13,9 @@ from fastapi.testclient import TestClient
 from sqlalchemy import select
 
 from app.database import Base, SessionLocal, engine, normalize_database_url
+from app.config import settings
 from app.main import app
-from app.models import AbsenceRequest, Attendance, Document, Employee, ReminderDelivery, ReportRecord, User, WorkLog
+from app.models import AccessRequest, AbsenceRequest, Attendance, Document, Employee, ReminderDelivery, ReportRecord, User, WorkLog
 from app.notifications import process_leave_reminders
 from app.services import daily_roster, today
 
@@ -58,6 +59,73 @@ def test_health_and_anonymous_boundary():
 def test_railway_postgres_url_uses_installed_driver():
     assert normalize_database_url("postgresql://user:pass@host/db") == "postgresql+psycopg://user:pass@host/db"
     assert normalize_database_url("postgres://user:pass@host/db") == "postgresql+psycopg://user:pass@host/db"
+
+
+def test_owner_can_replace_bootstrap_account_once():
+    original_token = settings.owner_setup_token
+    object.__setattr__(settings, "owner_setup_token", "one-time-owner-token")
+    try:
+        with TestClient(app) as client:
+            response = client.post(
+                "/setup",
+                data={"setup_token": "one-time-owner-token", "display_name": "Ward Owner", "email": "owner@example.go.ke", "password": "OwnerPassword123!"},
+                follow_redirects=False,
+            )
+            assert response.status_code == 303
+            assert client.get("/").status_code == 200
+            assert client.get("/setup", follow_redirects=False).status_code == 303
+            with SessionLocal() as db:
+                owner = db.scalar(select(User).where(User.email == "owner@example.go.ke"))
+                assert owner.role == "system_admin"
+                assert owner.must_change_password is False
+    finally:
+        object.__setattr__(settings, "owner_setup_token", original_token)
+
+
+def test_owner_approves_read_only_signup():
+    with TestClient(app) as owner_client:
+        csrf = login(owner_client)
+        registration = owner_client.get("/register")
+        register_csrf = re.search(r'name="register_csrf" value="([^"]+)"', registration.text).group(1)
+        requested = owner_client.post(
+            "/register",
+            data={
+                "display_name": "Benchmark Visitor",
+                "email": "visitor@example.go.ke",
+                "password": "VisitorPassword123!",
+                "reason": "I want to benchmark ward reporting operations",
+                "register_csrf": register_csrf,
+            },
+        )
+        assert "sent to the system owner" in requested.text
+        with SessionLocal() as db:
+            access_request = db.scalar(select(AccessRequest).where(AccessRequest.email == "visitor@example.go.ke"))
+            assert access_request.status == "pending"
+
+        unapproved_client = TestClient(app)
+        unapproved_login = unapproved_client.post("/login", data={"email": "visitor@example.go.ke", "password": "VisitorPassword123!"})
+        assert unapproved_login.status_code == 401
+
+        approved = owner_client.post(
+            f"/admin/access-requests/{access_request.id}/approve",
+            data={"csrf_token": csrf, "review_note": "Benchmark approved"},
+            follow_redirects=False,
+        )
+        assert approved.status_code == 303
+
+        visitor_client = TestClient(app)
+        visitor_login = visitor_client.post(
+            "/login",
+            data={"email": "visitor@example.go.ke", "password": "VisitorPassword123!"},
+            follow_redirects=False,
+        )
+        assert visitor_login.status_code == 303
+        assert "Read-only benchmark access" in visitor_client.get("/").text
+        forbidden = visitor_client.post(
+            "/sessions",
+            data={"activity": "Not allowed", "location": "Makina", "duration": "60", "csrf_token": "irrelevant"},
+        )
+        assert forbidden.status_code == 403
 
 
 def test_csrf_is_required_for_privileged_changes():

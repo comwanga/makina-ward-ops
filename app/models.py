@@ -102,6 +102,21 @@ class UserSession(Base):
     user: Mapped[User] = relationship()
 
 
+class AccessRequest(Base):
+    __tablename__ = "access_requests"
+
+    id: Mapped[int] = mapped_column(primary_key=True)
+    display_name: Mapped[str] = mapped_column(String(120))
+    email: Mapped[str] = mapped_column(String(160), index=True)
+    password_hash: Mapped[str] = mapped_column(String(300))
+    reason: Mapped[str] = mapped_column(Text)
+    status: Mapped[str] = mapped_column(String(20), default="pending", index=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime)
+    reviewed_by: Mapped[int | None] = mapped_column(ForeignKey("users.id"), nullable=True)
+    reviewed_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
+    review_note: Mapped[str | None] = mapped_column(Text, nullable=True)
+
+
 class AuditEvent(Base):
     __tablename__ = "audit_events"
 

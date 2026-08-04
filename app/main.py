@@ -23,7 +23,7 @@ from .audit import record_audit
 from .auth import COOKIE_NAME, AuthContext, create_session as create_user_session, hash_password, optional_user, require_roles, require_user, verify_csrf, verify_password
 from .config import settings
 from .database import Base, SessionLocal, engine, get_db
-from .models import AbsenceRequest, Attendance, AttendanceSession, AuditEvent, Document, Employee, ReminderDelivery, ReportRecord, User, UserSession, WorkLog
+from .models import AccessRequest, AbsenceRequest, Attendance, AttendanceSession, AuditEvent, Document, Employee, ReminderDelivery, ReportRecord, User, UserSession, WorkLog
 from .notifications import process_leave_reminders
 from .reporting import ai_narrative, build_snapshot, deterministic_narrative
 from .services import dashboard_data, now, today
@@ -36,11 +36,9 @@ CHECKIN_ATTEMPTS: dict[str, tuple[int, object]] = {}
 
 
 def initialize_database() -> None:
-    if settings.app_env == "production" and settings.bootstrap_password == "ChangeMe123!":
-        raise RuntimeError("BOOTSTRAP_ADMIN_PASSWORD must be changed in production")
     Base.metadata.create_all(engine)
     with SessionLocal() as db:
-        if db.scalar(select(User.id).limit(1)) is None:
+        if settings.app_env == "development" and db.scalar(select(User.id).limit(1)) is None:
             db.add(
                 User(
                     email=settings.bootstrap_email.lower(),
@@ -101,11 +99,91 @@ def redirect_login() -> RedirectResponse:
     return RedirectResponse("/login", status_code=303)
 
 
+def owner_setup_available(db: Session) -> bool:
+    if db.scalar(select(AuditEvent.id).where(AuditEvent.action == "owner_setup_completed")):
+        return False
+    users = db.scalars(select(User).order_by(User.id)).all()
+    if not users:
+        return True
+    return len(users) == 1 and users[0].role == "system_admin" and users[0].email == settings.bootstrap_email.lower()
+
+
+@app.get("/setup", response_class=HTMLResponse)
+def setup_page(request: Request, db: Session = Depends(get_db)):
+    if not owner_setup_available(db):
+        return RedirectResponse("/login", status_code=303)
+    return templates.TemplateResponse(request=request, name="setup.html", context={"error": None})
+
+
+@app.post("/setup", response_class=HTMLResponse)
+def setup_owner(
+    request: Request, setup_token: str = Form(...), display_name: str = Form(...), email: str = Form(...), password: str = Form(...), db: Session = Depends(get_db),
+):
+    if not owner_setup_available(db):
+        raise HTTPException(409, "Owner setup has already been completed")
+    if not settings.owner_setup_token or not secrets.compare_digest(setup_token, settings.owner_setup_token):
+        return templates.TemplateResponse(request=request, name="setup.html", context={"error": "The owner setup token is incorrect"}, status_code=403)
+    normalized_email = email.strip().lower()
+    if len(display_name.strip()) < 3 or not re.fullmatch(r"[^@\s]+@[^@\s]+\.[^@\s]+", normalized_email) or len(password) < 12:
+        return templates.TemplateResponse(request=request, name="setup.html", context={"error": "Enter a valid name, email and password of at least 12 characters"}, status_code=400)
+    owner = db.scalar(select(User).order_by(User.id).limit(1))
+    if owner:
+        owner.display_name, owner.email, owner.password_hash = display_name.strip()[:120], normalized_email, hash_password(password)
+        owner.must_change_password = False
+        owner.active = True
+    else:
+        owner = User(email=normalized_email, display_name=display_name.strip()[:120], password_hash=hash_password(password), role="system_admin", active=True, must_change_password=False, created_at=now())
+        db.add(owner)
+    db.flush()
+    raw, _ = create_user_session(db, owner)
+    record_audit(db, request, "owner_setup_completed", "user", owner.id, owner.id)
+    db.commit()
+    response = RedirectResponse("/", status_code=303)
+    response.set_cookie(COOKIE_NAME, raw, httponly=True, secure=settings.secure_cookies, samesite="lax", max_age=settings.session_hours * 3600)
+    return response
+
+
+@app.get("/register", response_class=HTMLResponse)
+def register_page(request: Request):
+    register_csrf = secrets.token_urlsafe(24)
+    response = templates.TemplateResponse(request=request, name="register.html", context={"error": None, "success": None, "register_csrf": register_csrf})
+    response.set_cookie("register_csrf", register_csrf, httponly=True, secure=settings.secure_cookies, samesite="strict", max_age=1800)
+    return response
+
+
+@app.post("/register", response_class=HTMLResponse)
+def register_access(
+    request: Request, display_name: str = Form(...), email: str = Form(...), password: str = Form(...), reason: str = Form(...), register_csrf: str = Form(...), db: Session = Depends(get_db),
+):
+    if not secrets.compare_digest(request.cookies.get("register_csrf", ""), register_csrf):
+        raise HTTPException(403, "Invalid form security token")
+    normalized_email = email.strip().lower()
+    error = None
+    if len(display_name.strip()) < 3 or not re.fullmatch(r"[^@\s]+@[^@\s]+\.[^@\s]+", normalized_email):
+        error = "Enter a valid name and email address"
+    elif len(password) < 12:
+        error = "Password must contain at least 12 characters"
+    elif len(reason.strip()) < 10:
+        error = "Explain briefly why you need access"
+    elif db.scalar(select(User.id).where(User.email == normalized_email)):
+        error = "An account with this email already exists"
+    elif db.scalar(select(AccessRequest.id).where(AccessRequest.email == normalized_email, AccessRequest.status == "pending")):
+        error = "An access request for this email is already awaiting review"
+    if error:
+        return templates.TemplateResponse(request=request, name="register.html", context={"error": error, "success": None, "register_csrf": register_csrf}, status_code=400)
+    item = AccessRequest(display_name=display_name.strip()[:120], email=normalized_email, password_hash=hash_password(password), reason=reason.strip(), status="pending", created_at=now())
+    db.add(item)
+    db.flush()
+    record_audit(db, request, "access_requested", "access_request", item.id, details="Public read-only access request")
+    db.commit()
+    return templates.TemplateResponse(request=request, name="register.html", context={"error": None, "success": "Your request was sent to the system owner for approval.", "register_csrf": register_csrf})
+
+
 @app.get("/login", response_class=HTMLResponse)
-def login_page(request: Request, auth: AuthContext | None = Depends(optional_user)):
+def login_page(request: Request, auth: AuthContext | None = Depends(optional_user), db: Session = Depends(get_db)):
     if auth:
         return RedirectResponse("/", status_code=303)
-    return templates.TemplateResponse(request=request, name="login.html", context={"error": None})
+    return templates.TemplateResponse(request=request, name="login.html", context={"error": None, "setup_available": owner_setup_available(db)})
 
 
 @app.post("/login", response_class=HTMLResponse)
@@ -144,10 +222,11 @@ def dashboard(request: Request, auth: AuthContext | None = Depends(optional_user
     requests = db.scalars(select(AbsenceRequest).order_by(AbsenceRequest.created_at.desc()).limit(6)).all()
     work_logs = db.scalars(select(WorkLog).order_by(WorkLog.work_date.desc(), WorkLog.id.desc()).limit(5)).all()
     deliveries = db.scalars(select(ReminderDelivery).order_by(ReminderDelivery.created_at.desc()).limit(5)).all()
+    pending_access = db.scalars(select(AccessRequest).where(AccessRequest.status == "pending").order_by(AccessRequest.created_at)).all() if auth.user.role == "system_admin" else []
     return templates.TemplateResponse(
         request=request,
         name="dashboard.html",
-        context={**data, "session": session, "employees": employees, "now": now(), "auth": auth, "csrf": auth.session.csrf_token, "requests": requests, "work_logs": work_logs, "deliveries": deliveries},
+        context={**data, "session": session, "employees": employees, "now": now(), "auth": auth, "csrf": auth.session.csrf_token, "requests": requests, "work_logs": work_logs, "deliveries": deliveries, "pending_access": pending_access},
     )
 
 
@@ -504,6 +583,8 @@ def saved_report(report_id: str, request: Request, auth: AuthContext | None = De
 
 @app.get("/reports/{report_id}.csv")
 def report_csv(report_id: int, request: Request, auth: AuthContext = Depends(require_user), db: Session = Depends(get_db)):
+    if auth.user.role == "read_only":
+        raise HTTPException(403, "Read-only benchmark accounts cannot export operational data")
     item = db.get(ReportRecord, report_id)
     if not item:
         raise HTTPException(404, "Report not found")
@@ -557,7 +638,8 @@ def users_page(request: Request, auth: AuthContext | None = Depends(optional_use
     if auth.user.role != "system_admin":
         raise HTTPException(403, "System administrator access is required")
     users = db.scalars(select(User).order_by(User.display_name)).all()
-    return templates.TemplateResponse(request=request, name="users.html", context={"auth": auth, "csrf": auth.session.csrf_token, "users": users})
+    access_requests = db.scalars(select(AccessRequest).order_by(AccessRequest.created_at.desc())).all()
+    return templates.TemplateResponse(request=request, name="users.html", context={"auth": auth, "csrf": auth.session.csrf_token, "users": users, "access_requests": access_requests})
 
 
 @app.post("/admin/users")
@@ -566,7 +648,7 @@ def create_user(
     auth: AuthContext = Depends(require_roles("system_admin")), db: Session = Depends(get_db),
 ):
     verify_csrf(auth, csrf_token)
-    roles = {"ward_officer", "subcounty_reviewer", "hr_viewer", "system_admin"}
+    roles = {"read_only", "ward_officer", "subcounty_reviewer", "hr_viewer", "system_admin"}
     if role not in roles or len(password) < 12 or len(display_name.strip()) < 3:
         raise HTTPException(400, "Valid details and a password of at least 12 characters are required")
     item = User(email=email.strip().lower(), display_name=display_name.strip()[:120], password_hash=hash_password(password), role=role, must_change_password=True, created_at=now())
@@ -579,6 +661,66 @@ def create_user(
         db.rollback()
         raise HTTPException(409, "A user with this email already exists")
     return RedirectResponse("/admin/users", status_code=303)
+
+
+@app.post("/admin/access-requests/{request_id}/{action}")
+def review_access_request(
+    request_id: int, action: str, request: Request, csrf_token: str = Form(...), review_note: str = Form(""),
+    auth: AuthContext = Depends(require_roles("system_admin")), db: Session = Depends(get_db),
+):
+    verify_csrf(auth, csrf_token)
+    item = db.get(AccessRequest, request_id)
+    if not item or item.status != "pending" or action not in {"approve", "reject"}:
+        raise HTTPException(404, "Pending access request not found")
+    if action == "approve":
+        if db.scalar(select(User.id).where(User.email == item.email)):
+            raise HTTPException(409, "An account with this email already exists")
+        user = User(email=item.email, display_name=item.display_name, password_hash=item.password_hash, role="read_only", active=True, must_change_password=False, created_at=now())
+        db.add(user)
+        db.flush()
+        item.status = "approved"
+        details = f"Read-only user {user.id} created"
+    else:
+        item.status = "rejected"
+        details = review_note.strip() or "Access declined"
+    item.reviewed_by, item.reviewed_at, item.review_note = auth.user.id, now(), review_note.strip() or None
+    record_audit(db, request, f"access_request_{item.status}", "access_request", item.id, auth.user.id, details)
+    db.commit()
+    return RedirectResponse("/admin/users", status_code=303)
+
+
+@app.get("/account", response_class=HTMLResponse)
+def account_page(request: Request, auth: AuthContext | None = Depends(optional_user)):
+    if not auth:
+        return redirect_login()
+    return templates.TemplateResponse(request=request, name="account.html", context={"auth": auth, "csrf": auth.session.csrf_token, "error": None})
+
+
+@app.post("/account", response_class=HTMLResponse)
+def update_account(
+    request: Request, display_name: str = Form(...), email: str = Form(...), current_password: str = Form(...), new_password: str = Form(""), csrf_token: str = Form(...),
+    auth: AuthContext = Depends(require_user), db: Session = Depends(get_db),
+):
+    verify_csrf(auth, csrf_token)
+    normalized_email = email.strip().lower()
+    error = None
+    if not verify_password(current_password, auth.user.password_hash):
+        error = "Current password is incorrect"
+    elif len(display_name.strip()) < 3 or not re.fullmatch(r"[^@\s]+@[^@\s]+\.[^@\s]+", normalized_email):
+        error = "Enter a valid name and email address"
+    elif new_password and len(new_password) < 12:
+        error = "The new password must contain at least 12 characters"
+    elif db.scalar(select(User.id).where(User.email == normalized_email, User.id != auth.user.id)):
+        error = "Another account already uses this email address"
+    if error:
+        return templates.TemplateResponse(request=request, name="account.html", context={"auth": auth, "csrf": auth.session.csrf_token, "error": error}, status_code=400)
+    auth.user.display_name, auth.user.email = display_name.strip()[:120], normalized_email
+    if new_password:
+        auth.user.password_hash = hash_password(new_password)
+    auth.user.must_change_password = False
+    record_audit(db, request, "account_updated", "user", auth.user.id, auth.user.id)
+    db.commit()
+    return RedirectResponse("/account", status_code=303)
 
 
 @app.post("/account/password")

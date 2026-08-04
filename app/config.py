@@ -21,6 +21,7 @@ class Settings:
     session_hours: int = int(os.getenv("SESSION_HOURS", "12"))
     bootstrap_email: str = os.getenv("BOOTSTRAP_ADMIN_EMAIL", "officer@makina.local")
     bootstrap_password: str = os.getenv("BOOTSTRAP_ADMIN_PASSWORD", "ChangeMe123!")
+    owner_setup_token: str | None = os.getenv("OWNER_SETUP_TOKEN")
     smtp_host: str | None = os.getenv("SMTP_HOST")
     smtp_port: int = int(os.getenv("SMTP_PORT", "587"))
     smtp_username: str | None = os.getenv("SMTP_USERNAME")
