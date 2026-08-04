@@ -5,14 +5,14 @@
 1. Sign in and generate the day's attendance QR with activity, location and closing time.
 2. Display the QR at the work site. Use supervised check-in only when necessary and record the reason.
 3. Review unaccounted staff. For staff who did not use the QR, record an audited supervised-present, confirmed-absent, or off-duty exception.
-4. Record work completed, structured output quantities, staff count and challenges.
-5. Mark work complete or incomplete, then select photos from the phone gallery or take new photos.
+4. Record areas or roads covered, number of trips, staff count, equipment used, cleanup stakeholders and challenges.
+5. Mark work complete or incomplete, then select up to four before, four during and four after photos from the phone gallery or camera.
 6. Have an authorised reviewer approve requests and work logs.
 7. Review the AI-assisted narrative and recommendations, then sign and archive the daily report.
 
 ## Weekly and monthly reports
 
-Open Reports, choose the period and preview it. Reports include recommendations, field photos, the owner's full name, and generation date/time. Finalised reports are immutable archived snapshots for appraisal and future reference.
+Open Reports, choose the period and preview it. Daily reports contain all attached field photos. Weekly and monthly reports contain a balanced sample of up to four before, four during and four after photos from the period. Reports also include recommendations, the owner's full name, and generation date/time. Finalised reports are immutable archived snapshots for appraisal and future reference.
 
 Use **Attendance history** to select any calendar date, review check-in times and statuses, generate that day's staff report, or reopen an already archived daily report.
 

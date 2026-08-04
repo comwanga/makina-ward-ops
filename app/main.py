@@ -24,7 +24,7 @@ from .auth import COOKIE_NAME, AuthContext, create_session as create_user_sessio
 from .config import settings
 from .database import Base, SessionLocal, engine, get_db
 from .importing import normalize_roster_status, parse_roster
-from .models import AccessRequest, AbsenceRequest, Attendance, AttendanceSession, AuditEvent, Document, DocumentClassification, Employee, EmployeeProfile, ReminderDelivery, ReportRecord, User, UserSession, WorkLog, WorkLogDetail, WorkPhoto
+from .models import AccessRequest, AbsenceRequest, Attendance, AttendanceSession, AuditEvent, Document, DocumentClassification, Employee, EmployeeProfile, ReminderDelivery, ReportRecord, User, UserSession, WorkLog, WorkLogDetail, WorkLogOperations, WorkPhoto, WorkPhotoStage
 from .notifications import process_leave_reminders
 from .reporting import ai_narrative, build_snapshot, deterministic_narrative, deterministic_recommendations
 from .services import daily_roster, dashboard_data, now, today
@@ -625,27 +625,45 @@ async def save_work_photo(upload: UploadFile, work_log_id: int, user_id: int, ca
 
 @app.post("/work-logs")
 async def create_work_log(
-    request: Request, work_date: date = Form(...), activity: str = Form(...), location: str = Form(...), description: str = Form(...), quantity: float | None = Form(None), unit: str | None = Form(None), staff_count: int = Form(0), challenges: str | None = Form(None), completion_status: str = Form("complete"), outstanding_work: str = Form(""), photo_caption: str = Form(""), csrf_token: str = Form(...), photos: list[UploadFile] = File(default=[]),
+    request: Request, work_date: date = Form(...), activity: str = Form(...), location: str = Form(...), areas_roads: str = Form(...), description: str = Form(...), number_of_trips: int = Form(0), waste_transfer_involved: bool = Form(False), truck_id: str = Form(""), backhoe_id: str = Form(""), staff_count: int = Form(0), challenges: str | None = Form(None), cleanup_done: bool = Form(False), cleanup_stakeholders: str = Form(""), climate_team_count: int = Form(0), completion_status: str = Form("complete"), outstanding_work: str = Form(""), photo_caption: str = Form(""), csrf_token: str = Form(...), before_photos: list[UploadFile] = File(default=[]), during_photos: list[UploadFile] = File(default=[]), after_photos: list[UploadFile] = File(default=[]),
     auth: AuthContext = Depends(require_roles("ward_officer", "system_admin")), db: Session = Depends(get_db),
 ):
     verify_csrf(auth, csrf_token)
-    if min(len(activity.strip()), len(location.strip()), len(description.strip())) < 3 or quantity is not None and quantity < 0 or staff_count < 0 or completion_status not in {"complete", "incomplete"}:
+    truck_id = truck_id.strip().upper()
+    backhoe_id = backhoe_id.strip().upper()
+    if min(len(activity.strip()), len(location.strip()), len(areas_roads.strip()), len(description.strip())) < 3 or number_of_trips < 0 or staff_count < 0 or climate_team_count < 0 or completion_status not in {"complete", "incomplete"}:
         raise HTTPException(400, "Work log details are invalid")
+    if truck_id and not re.fullmatch(r"T-\d+", truck_id):
+        raise HTTPException(400, "Truck identification must use the format T-161")
+    if backhoe_id and not re.fullmatch(r"BH\d+", backhoe_id):
+        raise HTTPException(400, "Backhoe identification must use the format BH13")
+    if waste_transfer_involved and (number_of_trips < 1 or not (truck_id or backhoe_id)):
+        raise HTTPException(400, "Waste transfer requires at least one trip and a truck or backhoe identification number")
+    if cleanup_done and not (cleanup_stakeholders.strip() or climate_team_count > 0):
+        raise HTTPException(400, "Record the cleanup stakeholders or the number of Climate Works team members")
     if completion_status == "incomplete" and len(outstanding_work.strip()) < 5:
         raise HTTPException(400, "Describe the outstanding work for an incomplete activity")
-    photos = [photo for photo in photos if photo.filename]
-    if len(photos) > 8:
-        raise HTTPException(400, "A work log can contain at most 8 photos")
-    item = WorkLog(work_date=work_date, activity=activity.strip()[:160], location=location.strip()[:160], description=description.strip(), quantity=quantity, unit=unit.strip()[:40] if unit else None, staff_count=staff_count, challenges=challenges.strip() if challenges else None, status="submitted", submitted_by=auth.user.id, created_at=now())
+    staged_photos = {
+        "before": [photo for photo in before_photos if photo.filename],
+        "during": [photo for photo in during_photos if photo.filename],
+        "after": [photo for photo in after_photos if photo.filename],
+    }
+    if any(len(photos) > 4 for photos in staged_photos.values()):
+        raise HTTPException(400, "Select at most 4 before, 4 during, and 4 after photos")
+    item = WorkLog(work_date=work_date, activity=activity.strip()[:160], location=location.strip()[:160], description=description.strip(), quantity=None, unit=None, staff_count=staff_count, challenges=challenges.strip() if challenges else None, status="submitted", submitted_by=auth.user.id, created_at=now())
     db.add(item)
     db.flush()
     db.add(WorkLogDetail(work_log_id=item.id, completion_status=completion_status, outstanding_work=outstanding_work.strip() or None))
+    db.add(WorkLogOperations(work_log_id=item.id, areas_roads=areas_roads.strip(), number_of_trips=number_of_trips, waste_transfer_involved=waste_transfer_involved, truck_id=truck_id or None, backhoe_id=backhoe_id or None, cleanup_done=cleanup_done, cleanup_stakeholders=cleanup_stakeholders.strip() or None, climate_team_count=climate_team_count))
     stored_paths: list[Path] = []
     try:
-        for photo in photos:
-            stored = await save_work_photo(photo, item.id, auth.user.id, photo_caption)
-            stored_paths.append(settings.document_root / stored.storage_key)
-            db.add(stored)
+        for stage, photos in staged_photos.items():
+            for photo in photos:
+                stored = await save_work_photo(photo, item.id, auth.user.id, photo_caption)
+                stored_paths.append(settings.document_root / stored.storage_key)
+                db.add(stored)
+                db.flush()
+                db.add(WorkPhotoStage(photo_id=stored.id, stage=stage))
         record_audit(db, request, "work_log_submitted", "work_log", item.id, auth.user.id)
         db.commit()
     except Exception:
@@ -695,7 +713,7 @@ def report_preview(request: Request, start_date: date, end_date: date, kind: str
     if not auth:
         return redirect_login()
     try:
-        snapshot = build_snapshot(db, start_date, end_date)
+        snapshot = build_snapshot(db, start_date, end_date, kind)
     except ValueError as exc:
         raise HTTPException(400, str(exc))
     return templates.TemplateResponse(request=request, name="report_period.html", context={"auth": auth, "csrf": auth.session.csrf_token, "snapshot": snapshot, "narrative": deterministic_narrative(snapshot), "recommendations": deterministic_recommendations(snapshot), "kind": kind, "record": None, "generated_at": now(), "signed_by": auth.user.display_name})
@@ -704,7 +722,7 @@ def report_preview(request: Request, start_date: date, end_date: date, kind: str
 @app.post("/reports/finalize")
 def finalize_report(request: Request, start_date: date = Form(...), end_date: date = Form(...), kind: str = Form(...), narrative: str = Form(...), recommendations: str = Form(...), csrf_token: str = Form(...), auth: AuthContext = Depends(require_roles("subcounty_reviewer", "system_admin")), db: Session = Depends(get_db)):
     verify_csrf(auth, csrf_token)
-    snapshot = build_snapshot(db, start_date, end_date)
+    snapshot = build_snapshot(db, start_date, end_date, kind)
     generated_at = now()
     snapshot["recommendations"] = recommendations.strip() or deterministic_recommendations(snapshot)
     snapshot["signed_by"] = auth.user.display_name
@@ -762,7 +780,7 @@ def report_csv(report_id: int, request: Request, auth: AuthContext = Depends(req
 @app.post("/reports/ai-draft", response_class=HTMLResponse)
 def generate_ai_draft(request: Request, start_date: date = Form(...), end_date: date = Form(...), kind: str = Form(...), csrf_token: str = Form(...), auth: AuthContext = Depends(require_roles("ward_officer", "system_admin")), db: Session = Depends(get_db)):
     verify_csrf(auth, csrf_token)
-    snapshot = build_snapshot(db, start_date, end_date)
+    snapshot = build_snapshot(db, start_date, end_date, kind)
     narrative = ai_narrative(snapshot)
     record_audit(db, request, "report_narrative_drafted", "report", actor_user_id=auth.user.id, details="AI enabled" if settings.ai_enabled else "Deterministic fallback")
     db.commit()

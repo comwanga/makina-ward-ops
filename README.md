@@ -30,10 +30,12 @@ Makina Ward Operations is a mobile-first workforce attendance and environment re
 
 ### Field operations
 
-- Daily work descriptions, locations, quantities, units, staff counts, and challenges.
+- Daily work descriptions, areas or roads covered, trip counts, staff counts, and challenges.
+- Optional truck (`T-161`) and backhoe (`BH13`) identification for waste loading or transfer.
+- Cleanup exercise stakeholders and Climate Works team participation.
 - Separate complete and incomplete work status with outstanding-work notes.
-- Select field photos from a phone gallery or take new photos with the phone camera.
-- Up to eight private field photos per work log.
+- Select up to four before, four during, and four after photos from a phone gallery or camera.
+- Daily reports include all field photos; weekly and monthly reports include a balanced sample.
 - Review and approval workflow before work appears in final reports.
 
 ### Reports and AI

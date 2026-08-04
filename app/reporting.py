@@ -20,7 +20,24 @@ def date_range(start: date, end: date):
         current += timedelta(days=1)
 
 
-def build_snapshot(db: Session, start: date, end: date) -> dict:
+def sample_period_photos(work: list[dict], kind: str) -> None:
+    if kind not in {"weekly", "monthly"}:
+        return
+    by_stage: dict[str, list[dict]] = {}
+    for item in work:
+        for photo in item["photos"]:
+            by_stage.setdefault(photo["stage"], []).append(photo)
+    selected_ids: set[int] = set()
+    for photos in by_stage.values():
+        if len(photos) <= 4:
+            selected_ids.update(photo["id"] for photo in photos)
+            continue
+        selected_ids.update(photos[round(index * (len(photos) - 1) / 3)]["id"] for index in range(4))
+    for item in work:
+        item["photos"] = [photo for photo in item["photos"] if photo["id"] in selected_ids]
+
+
+def build_snapshot(db: Session, start: date, end: date, kind: str = "custom") -> dict:
     if end < start or (end - start).days > 366:
         raise ValueError("Report period must be between 1 and 367 days")
     days = []
@@ -60,34 +77,40 @@ def build_snapshot(db: Session, start: date, end: date) -> dict:
         .where(WorkLog.work_date >= start, WorkLog.work_date <= end, WorkLog.status == "approved")
         .order_by(WorkLog.work_date)
     ).all()
-    work = [
-        {
+    work = []
+    for item in work_logs:
+        operations = item.operations
+        work.append({
             "date": item.work_date.isoformat(),
             "activity": item.activity,
             "location": item.location,
+            "areas_roads": operations.areas_roads if operations else item.location,
             "description": item.description,
+            "number_of_trips": operations.number_of_trips if operations else 0,
+            "legacy_output": operations is None and item.quantity is not None,
             "quantity": item.quantity,
             "unit": item.unit,
+            "waste_transfer_involved": operations.waste_transfer_involved if operations else False,
+            "truck_id": operations.truck_id if operations else None,
+            "backhoe_id": operations.backhoe_id if operations else None,
+            "cleanup_done": operations.cleanup_done if operations else False,
+            "cleanup_stakeholders": operations.cleanup_stakeholders if operations else None,
+            "climate_team_count": operations.climate_team_count if operations else 0,
             "staff_count": item.staff_count,
             "challenges": item.challenges,
             "completion_status": item.detail.completion_status if item.detail else "complete",
             "outstanding_work": item.detail.outstanding_work if item.detail else None,
-            "photos": [{"id": photo.id, "caption": photo.caption, "sha256": photo.sha256} for photo in item.photos],
-        }
-        for item in work_logs
-    ]
-    return {"start_date": start.isoformat(), "end_date": end.isoformat(), "totals": totals, "days": days, "work_logs": work}
+            "photos": [{"id": photo.id, "caption": photo.caption, "sha256": photo.sha256, "stage": photo.stage_record.stage if photo.stage_record else "field"} for photo in item.photos],
+        })
+    sample_period_photos(work, kind)
+    return {"start_date": start.isoformat(), "end_date": end.isoformat(), "kind": kind, "totals": totals, "days": days, "work_logs": work}
 
 
 def deterministic_narrative(snapshot: dict) -> str:
     totals = snapshot["totals"]
     work = snapshot["work_logs"]
     activities = sorted({item["activity"] for item in work})
-    output_parts = [
-        f"{item['quantity']:g} {item['unit']} ({item['activity']})"
-        for item in work
-        if item["quantity"] is not None and item["unit"]
-    ]
+    output_parts = [f"{item['number_of_trips']} trips ({item['activity']})" for item in work if item.get("number_of_trips", 0) > 0]
     text = (
         f"During the reporting period, {len(work)} approved work activities were recorded. "
         f"Attendance records contained {totals.get('present', 0)} present and {totals.get('late', 0)} late entries, "
@@ -113,8 +136,8 @@ def structured_ai_payload(snapshot: dict) -> dict:
             "date": item["date"],
             "activity": item["activity"],
             "location": item["location"],
-            "quantity": item["quantity"],
-            "unit": item["unit"],
+            "areas_roads": item.get("areas_roads"),
+            "number_of_trips": item.get("number_of_trips", 0),
             "staff_count": item["staff_count"],
             "completion_status": item.get("completion_status", "complete"),
         }
