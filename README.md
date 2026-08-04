@@ -21,7 +21,9 @@ Makina Ward Operations is a mobile-first workforce attendance and environment re
 - Employee verification using payroll/employee ID and registered phone details.
 - Duplicate check-in prevention, late classification, and optional GPS capture.
 - Supervised check-in for staff without suitable smartphones.
+- Audited manual exceptions for staff who remain absent after QR check-in, including confirmed absent and off-duty status.
 - Automatic present, absent, late, annual-leave, and sick-off tallies.
+- Date-based attendance and check-in history with daily staff report generation for any day of the year.
 - Planned leave schedules and 30-, 14-, and 7-day reminder processing.
 - Approval and rejection workflows for leave and sick-off records.
 - Private uploads for sick sheets, medical certificates, leave forms, approvals, and return-to-work forms.

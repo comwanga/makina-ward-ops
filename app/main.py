@@ -27,7 +27,7 @@ from .importing import normalize_roster_status, parse_roster
 from .models import AccessRequest, AbsenceRequest, Attendance, AttendanceSession, AuditEvent, Document, DocumentClassification, Employee, EmployeeProfile, ReminderDelivery, ReportRecord, User, UserSession, WorkLog, WorkLogDetail, WorkPhoto
 from .notifications import process_leave_reminders
 from .reporting import ai_narrative, build_snapshot, deterministic_narrative, deterministic_recommendations
-from .services import dashboard_data, now, today
+from .services import daily_roster, dashboard_data, now, today
 
 
 ROOT = Path(__file__).resolve().parent.parent
@@ -224,10 +224,11 @@ def dashboard(request: Request, auth: AuthContext | None = Depends(optional_user
     work_logs = db.scalars(select(WorkLog).order_by(WorkLog.work_date.desc(), WorkLog.id.desc()).limit(5)).all()
     deliveries = db.scalars(select(ReminderDelivery).order_by(ReminderDelivery.created_at.desc()).limit(5)).all()
     pending_access = db.scalars(select(AccessRequest).where(AccessRequest.status == "pending").order_by(AccessRequest.created_at)).all() if auth.user.role == "system_admin" else []
+    manual_candidates = [row["employee"] for row in data["roster"] if row["status"] == "absent"]
     return templates.TemplateResponse(
         request=request,
         name="dashboard.html",
-        context={**data, "session": session, "employees": employees, "now": now(), "auth": auth, "csrf": auth.session.csrf_token, "requests": requests, "work_logs": work_logs, "deliveries": deliveries, "pending_access": pending_access},
+        context={**data, "session": session, "employees": employees, "manual_candidates": manual_candidates, "now": now(), "auth": auth, "csrf": auth.session.csrf_token, "requests": requests, "work_logs": work_logs, "deliveries": deliveries, "pending_access": pending_access},
     )
 
 
@@ -328,25 +329,48 @@ def normalized_phone(value: str) -> str:
 
 @app.post("/attendance/supervised")
 def supervised_attendance(
-    request: Request, employee_id: int = Form(...), reason: str = Form(...), csrf_token: str = Form(...),
+    request: Request, employee_id: int = Form(...), attendance_status: str = Form("present"), reason: str = Form(...), csrf_token: str = Form(...),
     auth: AuthContext = Depends(require_roles("ward_officer", "system_admin")), db: Session = Depends(get_db),
 ):
     verify_csrf(auth, csrf_token)
-    if len(reason.strip()) < 5:
+    if len(reason.strip()) < 5 or attendance_status not in {"present", "absent", "off_duty"}:
         raise HTTPException(400, "A reason is required for supervised attendance")
     employee = db.get(Employee, employee_id)
     session = db.scalar(select(AttendanceSession).where(AttendanceSession.work_date == today()).order_by(AttendanceSession.created_at.desc()))
     if not employee or not employee.active or not session:
         raise HTTPException(404, "Employee or today's attendance session was not found")
-    db.add(Attendance(employee_id=employee.id, session_id=session.id, work_date=today(), checked_at=now(), status="late" if now() > session.opens_at + timedelta(minutes=30) else "present"))
+    existing = db.scalar(select(Attendance).where(Attendance.employee_id == employee.id, Attendance.work_date == today()))
+    roster_row = next((row for row in daily_roster(db, today()) if row["employee"].id == employee.id), None)
+    if existing or not roster_row or roster_row["status"] != "absent":
+        raise HTTPException(409, "Manual status is only allowed for staff who did not check in and remain absent")
+    db.add(Attendance(employee_id=employee.id, session_id=session.id, work_date=today(), checked_at=now(), status=attendance_status))
     try:
         db.flush()
-        record_audit(db, request, "attendance_supervised", "employee", employee.id, auth.user.id, reason.strip())
+        record_audit(db, request, "attendance_manual_exception", "employee", employee.id, auth.user.id, f"{attendance_status}: {reason.strip()}")
         db.commit()
     except IntegrityError:
         db.rollback()
         raise HTTPException(409, "Attendance already exists for this employee today")
     return RedirectResponse("/#staff", status_code=303)
+
+
+@app.get("/attendance/history", response_class=HTMLResponse)
+def attendance_history(request: Request, report_date: date | None = None, auth: AuthContext | None = Depends(optional_user), db: Session = Depends(get_db)):
+    if not auth:
+        return redirect_login()
+    selected = report_date or today()
+    data = dashboard_data(db, selected)
+    roster_ids = {row["employee"].id for row in data["roster"]}
+    historical_records = db.scalars(select(Attendance).where(Attendance.work_date == selected)).all()
+    for record in historical_records:
+        if record.employee_id not in roster_ids:
+            data["roster"].append({"employee": record.employee, "status": record.status, "detail": record.checked_at.strftime("%H:%M")})
+            data["counts"][record.status] = data["counts"].get(record.status, 0) + 1
+            data["total"] += 1
+    data["roster"].sort(key=lambda row: row["employee"].full_name)
+    session = db.scalar(select(AttendanceSession).where(AttendanceSession.work_date == selected).order_by(AttendanceSession.created_at.desc()))
+    archived_reports = db.scalars(select(ReportRecord).where(ReportRecord.kind == "daily", ReportRecord.start_date == selected, ReportRecord.end_date == selected).order_by(ReportRecord.created_at.desc())).all()
+    return templates.TemplateResponse(request=request, name="attendance_history.html", context={**data, "selected": selected, "session": session, "archived_reports": archived_reports, "auth": auth, "csrf": auth.session.csrf_token})
 
 
 @app.post("/employees")
