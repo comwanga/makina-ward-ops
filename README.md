@@ -59,7 +59,7 @@ PYTHONPATH=.packages python3 -m pytest -q
 1. Copy `.env.example` to `.env` and replace every credential and public URL.
 2. Set a separate strong `POSTGRES_PASSWORD` in `.env`.
 3. Configure approved SMTP details if email reminders will be sent.
-4. Keep `AI_ENABLED=false` until an approved AI provider and data-processing agreement are available.
+4. Keep `AI_ENABLED=false` until the Groq free-tier setup and data-processing terms are approved.
 5. Run `docker compose up --build -d`.
 6. Confirm `/health/ready` returns `{"status":"ready"}` through HTTPS.
 7. Sign in with the bootstrap administrator and immediately change its password.

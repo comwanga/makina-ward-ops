@@ -28,9 +28,9 @@ class Settings:
     smtp_password: str | None = os.getenv("SMTP_PASSWORD")
     smtp_from: str = os.getenv("SMTP_FROM", "makina-ward@example.go.ke")
     ai_enabled: bool = os.getenv("AI_ENABLED", "false").lower() == "true"
-    ai_base_url: str = os.getenv("AI_BASE_URL", "https://api.openai.com/v1")
+    ai_base_url: str = os.getenv("AI_BASE_URL", "https://api.groq.com/openai/v1")
     ai_api_key: str | None = os.getenv("AI_API_KEY")
-    ai_model: str = os.getenv("AI_MODEL", "gpt-4o-mini")
+    ai_model: str = os.getenv("AI_MODEL", "llama-3.1-8b-instant")
     max_upload_bytes: int = int(os.getenv("MAX_UPLOAD_BYTES", str(5 * 1024 * 1024)))
     document_root: Path = Path(os.getenv("DOCUMENT_ROOT", Path(__file__).resolve().parent.parent / "data" / "documents"))
 
