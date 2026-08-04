@@ -3,10 +3,20 @@ from dataclasses import dataclass
 from pathlib import Path
 
 
+def public_base_url() -> str:
+    configured = os.getenv("PUBLIC_BASE_URL")
+    if configured:
+        return configured.rstrip("/")
+    railway_domain = os.getenv("RAILWAY_PUBLIC_DOMAIN")
+    if railway_domain:
+        return f"https://{railway_domain}"
+    return "http://127.0.0.1:8000"
+
+
 @dataclass(frozen=True)
 class Settings:
     app_env: str = os.getenv("APP_ENV", "development")
-    public_base_url: str = os.getenv("PUBLIC_BASE_URL", "http://127.0.0.1:8000")
+    public_base_url: str = public_base_url()
     secure_cookies: bool = os.getenv("SECURE_COOKIES", "false").lower() == "true"
     session_hours: int = int(os.getenv("SESSION_HOURS", "12"))
     bootstrap_email: str = os.getenv("BOOTSTRAP_ADMIN_EMAIL", "officer@makina.local")
