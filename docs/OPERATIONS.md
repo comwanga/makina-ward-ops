@@ -18,7 +18,7 @@ Use **Attendance history** to select any calendar date, review check-in times an
 
 ## Staff roster
 
-Upload the official Excel list under **Staff register**. Payroll number is the Employee ID/User ID used during attendance verification. Existing IDs are updated. Correct typing errors with **Edit** and use **Deactivate** rather than deleting former staff. Imported annual leave affects the current daily tally until the record is changed back to on duty or a newer roster is uploaded.
+Upload the official Excel list under **Staff register**. The Employee ID must be 11 digits and start with the four-digit year, for example `20230464669`. Staff check in with the exact Employee ID saved in the register; phone numbers are not used for check-in verification. Existing IDs are updated. Correct typing errors with **Edit** and use **Deactivate** rather than deleting former staff. Imported annual leave affects the current daily tally until the record is changed back to on duty or a newer roster is uploaded.
 
 ## Scanned forms
 

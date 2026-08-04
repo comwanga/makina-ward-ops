@@ -13,12 +13,12 @@ Makina Ward Operations is a mobile-first workforce attendance and environment re
 - Read-only benchmark accounts that cannot change or export operational records.
 - Roles for system owners, ward officers, Sub County reviewers, HR viewers, and read-only visitors.
 - Staff creation, correction, deactivation, and reactivation without deleting historical records.
-- Excel and CSV roster imports that update existing payroll IDs and add new staff.
+- Excel and CSV roster imports that update existing Employee IDs and add new staff.
 
 ### Attendance and leave
 
 - Expiring daily QR attendance sessions.
-- Employee verification using payroll/employee ID and registered phone details.
+- Employee verification using the exact 11-digit, year-prefixed Employee ID saved in the register; phone numbers are not used for check-in.
 - Duplicate check-in prevention, late classification, and optional GPS capture.
 - Supervised check-in for staff without suitable smartphones.
 - Audited manual exceptions for staff who remain absent after QR check-in, including confirmed absent and off-duty status.
@@ -58,7 +58,7 @@ Upload an `.xlsx` workbook or UTF-8 `.csv` containing these required fields:
 Names | Phone Numbers | Pay Roll Numbers | Status | Residence
 ```
 
-Common heading variations are accepted. Payroll number becomes the Employee ID/User ID used during attendance verification.
+Common heading variations are accepted. The Employee ID value must contain exactly 11 digits and start with the four-digit year, for example `20230464669`.
 
 Supported roster statuses:
 
@@ -67,7 +67,7 @@ ON DUTY
 ANNUAL LEAVE
 ```
 
-Existing payroll IDs are updated and new IDs are added. Staff omitted from a later upload are not deleted automatically. Deactivate them from the staff register when necessary. Imported annual leave remains current until the record is changed back to on duty or a newer roster is uploaded.
+Existing Employee IDs are updated and new IDs are added. Staff omitted from a later upload are not deleted automatically. Deactivate them from the staff register when necessary. Imported annual leave remains current until the record is changed back to on duty or a newer roster is uploaded.
 
 ## Technology
 

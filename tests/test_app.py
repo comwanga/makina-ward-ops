@@ -172,15 +172,17 @@ def test_verified_checkin_and_duplicate_prevention():
         csrf = login(client)
         token = create_attendance_session(client, csrf)
         checkin_page = client.get(f"/check-in/{token}")
+        assert 'placeholder="20230464669"' in checkin_page.text
+        assert "phone_last_four" not in checkin_page.text
         public_csrf = re.search(r'name="public_csrf" value="([^"]+)"', checkin_page.text).group(1)
         checked = client.post(
             f"/check-in/{token}",
-            data={"employee_number": "ncc-1042", "phone_last_four": "5601", "public_csrf": public_csrf},
+            data={"employee_number": "20230464669", "public_csrf": public_csrf},
         )
         assert "Attendance confirmed" in checked.text
         duplicate = client.post(
             f"/check-in/{token}",
-            data={"employee_number": "NCC-1042", "phone_last_four": "5601", "public_csrf": public_csrf},
+            data={"employee_number": "20230464669", "public_csrf": public_csrf},
         )
         assert "already been recorded" in duplicate.text
         with SessionLocal() as db:
@@ -188,7 +190,7 @@ def test_verified_checkin_and_duplicate_prevention():
             assert len(records) == 1
 
 
-def test_short_phone_suffix_is_rejected():
+def test_invalid_employee_id_format_is_rejected():
     with TestClient(app) as client:
         csrf = login(client)
         token = create_attendance_session(client, csrf)
@@ -196,9 +198,14 @@ def test_short_phone_suffix_is_rejected():
         public_csrf = re.search(r'name="public_csrf" value="([^"]+)"', checkin_page.text).group(1)
         response = client.post(
             f"/check-in/{token}",
-            data={"employee_number": "NCC-1042", "phone_last_four": "1", "public_csrf": public_csrf},
+            data={"employee_number": "NCC-1042", "public_csrf": public_csrf},
         )
-        assert "exactly the last four" in response.text
+        assert "11-digit Employee ID" in response.text
+        unknown = client.post(
+            f"/check-in/{token}",
+            data={"employee_number": "20269999999", "public_csrf": public_csrf},
+        )
+        assert "does not match an active employee" in unknown.text
 
 
 def test_manual_exception_only_updates_staff_without_qr_checkin():
@@ -209,7 +216,7 @@ def test_manual_exception_only_updates_staff_without_qr_checkin():
         assert 'class="status-edit"' in dashboard.text
         assert '<option value="sick_off">Sick off</option>' in dashboard.text
         with SessionLocal() as db:
-            employee = db.scalar(select(Employee).where(Employee.employee_number == "NCC-1042"))
+            employee = db.scalar(select(Employee).where(Employee.employee_number == "20230464669"))
             employee_id = employee.id
         updated = client.post(
             "/attendance/supervised",
@@ -237,7 +244,7 @@ def test_approved_sick_off_replaces_manual_absence():
         csrf = login(client)
         create_attendance_session(client, csrf)
         with SessionLocal() as db:
-            employee = db.scalar(select(Employee).where(Employee.employee_number == "NCC-1187"))
+            employee = db.scalar(select(Employee).where(Employee.employee_number == "20242535656"))
             employee_id = employee.id
 
         manual = client.post(
@@ -279,7 +286,7 @@ def test_manual_sick_off_status_is_supported():
         csrf = login(client)
         create_attendance_session(client, csrf)
         with SessionLocal() as db:
-            employee_id = db.scalar(select(Employee).where(Employee.employee_number == "NCC-1042")).id
+            employee_id = db.scalar(select(Employee).where(Employee.employee_number == "20230464669")).id
         response = client.post(
             "/attendance/supervised",
             data={"employee_id": employee_id, "attendance_status": "sick_off", "reason": "Reported unwell before work", "csrf_token": csrf},
@@ -295,7 +302,7 @@ def test_approved_leave_reconciles_roster():
     with TestClient(app) as client:
         csrf = login(client)
         with SessionLocal() as db:
-            employee = db.scalar(select(Employee).where(Employee.employee_number == "NCC-1187"))
+            employee = db.scalar(select(Employee).where(Employee.employee_number == "20242535656"))
         start = today()
         response = client.post(
             "/absences",
@@ -388,7 +395,7 @@ def test_admin_can_create_user_and_import_staff_excel():
         sheet.append(["MAKINA WARD GREEN ARMY STAFF RETURN"])
         sheet.append(["Updated staff list"])
         sheet.append(["Employee Name(s)", "Mobile/Tel. No.", "Payroll Number / Employee ID / User ID", "Duty Status", "Area of Residence"])
-        sheet.append(["Jane Example", "0711111111", "NCC-2001", "ANNUAL LEAVE", "Makina"])
+        sheet.append(["Jane Example", "0711111111", "20231234567", "ANNUAL LEAVE", "Makina"])
         excel = BytesIO()
         workbook.save(excel)
         imported = client.post(
@@ -400,7 +407,7 @@ def test_admin_can_create_user_and_import_staff_excel():
         assert imported.status_code == 303
         with SessionLocal() as db:
             assert db.scalar(select(User).where(User.email == "reviewer@example.go.ke"))
-            employee = db.scalar(select(Employee).where(Employee.employee_number == "NCC-2001"))
+            employee = db.scalar(select(Employee).where(Employee.employee_number == "20231234567"))
             employee_id = employee.id
             assert employee.profile.residence == "Makina"
             assert employee.profile.roster_status == "annual_leave"
@@ -408,7 +415,7 @@ def test_admin_can_create_user_and_import_staff_excel():
             assert roster_row["status"] == "leave"
         edited = client.post(
             f"/employees/{employee_id}/edit",
-            data={"full_name": "Jane Wanjiku", "employee_number": "NCC-2001", "phone": "0711111111", "residence": "Laini Saba", "roster_status": "on_duty", "csrf_token": csrf},
+            data={"full_name": "Jane Wanjiku", "employee_number": "20231234567", "phone": "0711111111", "residence": "Laini Saba", "roster_status": "on_duty", "csrf_token": csrf},
             follow_redirects=False,
         )
         assert edited.status_code == 303
@@ -425,7 +432,7 @@ def test_medical_document_is_private_and_reminders_are_idempotent():
     with TestClient(app) as client:
         csrf = login(client)
         with SessionLocal() as db:
-            employee = db.scalar(select(Employee).where(Employee.employee_number == "NCC-1042"))
+            employee = db.scalar(select(Employee).where(Employee.employee_number == "20230464669"))
         start = today() + timedelta(days=30)
         response = client.post(
             "/absences",

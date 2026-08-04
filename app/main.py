@@ -53,12 +53,12 @@ def initialize_database() -> None:
         if settings.app_env == "development" and db.scalar(select(Employee.id).limit(1)) is None:
             db.add_all(
                 [
-                    Employee(employee_number="NCC-1042", full_name="Amina Wanjiku", phone="0712345601", email="amina@example.go.ke", role="Team Leader"),
-                    Employee(employee_number="NCC-1187", full_name="Brian Ochieng", phone="0712345602", email="brian@example.go.ke"),
-                    Employee(employee_number="NCC-1234", full_name="Faith Njeri", phone="0712345603", email="faith@example.go.ke"),
-                    Employee(employee_number="NCC-1298", full_name="Hassan Ali", phone="0712345604", email="hassan@example.go.ke"),
-                    Employee(employee_number="NCC-1351", full_name="Mercy Atieno", phone="0712345605", email="mercy@example.go.ke"),
-                    Employee(employee_number="NCC-1410", full_name="Peter Kamau", phone="0712345606", email="peter@example.go.ke"),
+                    Employee(employee_number="20230464669", full_name="Amina Wanjiku", phone="0712345601", email="amina@example.go.ke", role="Team Leader"),
+                    Employee(employee_number="20242535656", full_name="Brian Ochieng", phone="0712345602", email="brian@example.go.ke"),
+                    Employee(employee_number="20220123456", full_name="Faith Njeri", phone="0712345603", email="faith@example.go.ke"),
+                    Employee(employee_number="20210567890", full_name="Hassan Ali", phone="0712345604", email="hassan@example.go.ke"),
+                    Employee(employee_number="20200987654", full_name="Mercy Atieno", phone="0712345605", email="mercy@example.go.ke"),
+                    Employee(employee_number="20191234567", full_name="Peter Kamau", phone="0712345606", email="peter@example.go.ke"),
                 ]
             )
         db.commit()
@@ -277,7 +277,7 @@ def checkin_page(token: str, request: Request, db: Session = Depends(get_db)):
 
 @app.post("/check-in/{token}", response_class=HTMLResponse)
 def submit_checkin(
-    token: str, request: Request, employee_number: str = Form(...), phone_last_four: str = Form(...), public_csrf: str = Form(...),
+    token: str, request: Request, employee_number: str = Form(...), public_csrf: str = Form(...),
     latitude: float | None = Form(None), longitude: float | None = Form(None), db: Session = Depends(get_db),
 ):
     item = db.scalar(select(AttendanceSession).where(AttendanceSession.token == token))
@@ -292,17 +292,17 @@ def submit_checkin(
         raise HTTPException(429, "Too many attempts. Ask your supervisor for assistance")
     if not item or not (item.opens_at <= now() <= item.closes_at):
         message = "This attendance session is not open. Please contact your supervisor."
-    elif not re.fullmatch(r"\d{4}", phone_last_four.strip()):
-        message = "Enter exactly the last four digits of your registered phone number."
+    elif not valid_employee_number(employee_number):
+        message = "Enter your 11-digit Employee ID. It must start with the four-digit year, for example 20230464669."
     elif latitude is not None and not -90 <= latitude <= 90 or longitude is not None and not -180 <= longitude <= 180:
         message = "The location supplied by the device is invalid."
     else:
-        employee = db.scalar(select(Employee).where(Employee.employee_number == employee_number.strip().upper(), Employee.active.is_(True)))
-        if not employee or not employee.phone.endswith(phone_last_four.strip()):
+        employee = db.scalar(select(Employee).where(Employee.employee_number == employee_number.strip(), Employee.active.is_(True)))
+        if not employee:
             CHECKIN_ATTEMPTS[key] = (count + 1, started)
             record_audit(db, request, "checkin_failed", "attendance_session", item.id, details="Employee verification failed")
             db.commit()
-            message = "The employee number and phone digits do not match the official staff register."
+            message = "This Employee ID does not match an active employee in the staff register."
         else:
             status = "late" if now() > item.opens_at + timedelta(minutes=30) else "present"
             db.add(Attendance(employee_id=employee.id, session_id=item.id, work_date=item.work_date, checked_at=now(), status=status, latitude=latitude, longitude=longitude))
@@ -324,6 +324,17 @@ def normalized_phone(value: str) -> str:
         clean = f"0{clean}"
     if not re.fullmatch(r"(?:\+254|0)\d{9}", clean):
         raise HTTPException(400, "Enter a valid Kenyan phone number")
+    return clean
+
+
+def valid_employee_number(value: str) -> bool:
+    return re.fullmatch(r"(?:19|20)\d{9}", value.strip()) is not None
+
+
+def normalized_employee_number(value: str) -> str:
+    clean = value.strip()
+    if not valid_employee_number(clean):
+        raise HTTPException(400, "Employee ID must be 11 digits and start with a four-digit year, for example 20230464669")
     return clean
 
 
@@ -381,7 +392,7 @@ def add_employee(
     verify_csrf(auth, csrf_token)
     if len(full_name.strip()) < 3 or len(role.strip()) < 2:
         raise HTTPException(400, "Name and role are required")
-    item = Employee(employee_number=employee_number.strip().upper()[:30], full_name=full_name.strip()[:120], phone=normalized_phone(phone), email=email.strip().lower() if email else None, role=role.strip()[:80])
+    item = Employee(employee_number=normalized_employee_number(employee_number), full_name=full_name.strip()[:120], phone=normalized_phone(phone), email=email.strip().lower() if email else None, role=role.strip()[:80])
     db.add(item)
     try:
         db.flush()
@@ -414,8 +425,8 @@ async def import_employees(
     seen: set[str] = set()
     created = updated = 0
     for number, row in enumerate(rows, start=2):
-        employee_number = row.get("employee_number", "").strip().upper()
-        if not employee_number or len(employee_number) > 30 or employee_number in seen or len(row.get("full_name", "").strip()) < 3:
+        employee_number = row.get("employee_number", "").strip()
+        if not valid_employee_number(employee_number) or employee_number in seen or len(row.get("full_name", "").strip()) < 3:
             raise HTTPException(400, f"Invalid or duplicate employee at CSV row {number}")
         seen.add(employee_number)
         try:
@@ -469,7 +480,7 @@ def edit_employee(
     employee = db.get(Employee, employee_id)
     if not employee or len(full_name.strip()) < 3:
         raise HTTPException(404, "Employee not found")
-    employee.full_name, employee.employee_number, employee.phone = full_name.strip()[:120], employee_number.strip().upper()[:30], normalized_phone(phone)
+    employee.full_name, employee.employee_number, employee.phone = full_name.strip()[:120], normalized_employee_number(employee_number), normalized_phone(phone)
     profile = employee.profile or EmployeeProfile(employee_id=employee.id, updated_at=now())
     profile.residence, profile.roster_status, profile.updated_at = residence.strip()[:160] or None, normalize_roster_status(roster_status), now()
     if not employee.profile:
