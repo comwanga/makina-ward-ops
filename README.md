@@ -1,28 +1,87 @@
 # Makina Ward Operations
 
-A complete mobile-first staff attendance, leave, field-work and reporting application for Makina Ward, Kibra Sub County.
+Makina Ward Operations is a mobile-first workforce attendance and environment reporting system for Makina Ward, Kibra Sub County. It combines QR attendance, staff records, leave and sick-off evidence, field work documentation, report generation, controlled AI assistance, and an appraisal-ready report archive.
 
-## Capabilities
+> The `NCC` seal included in the interface is a placeholder. Replace it only with an officially approved Nairobi City County logo and branding asset.
 
-- Secure officer login with server-side sessions, CSRF protection, role checks and password rotation.
-- Roles for Ward Officers, Sub County Reviewers, HR Viewers and System Administrators.
-- Official staff register, individual entry and validated CSV import.
-- Expiring QR attendance, employee/phone verification, rate limiting, duplicate prevention and optional GPS.
-- Supervised check-in fallback for employees without suitable phones.
-- Planned leave, sick-off evidence, approval/rejection, return dates and overlap prevention.
-- Automated 30-, 14- and 7-day email reminder processing with idempotent delivery records.
-- Daily work logs with locations, quantities, units, staff counts, challenges and approval.
-- Daily, weekly, monthly and custom report periods.
-- Optional AI-assisted report narrative with deterministic fallback and no medical/contact data sent.
-- Immutable finalised report snapshots, print/PDF layout and Excel-compatible CSV export.
-- Private medical-document downloads restricted to HR and system administrators.
-- Append-only operational audit history.
-- SQLite for local evaluation and PostgreSQL/Docker deployment support.
-- Responsive installable web application manifest.
+## Main Features
 
-The `NCC` seal is a placeholder. Replace it only after receiving an approved Nairobi City County logo asset and written branding approval.
+### Staff and access management
 
-## Local setup
+- One-time system owner setup with a private Railway setup token.
+- Owner-controlled access requests and approval or rejection.
+- Read-only benchmark accounts that cannot change or export operational records.
+- Roles for system owners, ward officers, Sub County reviewers, HR viewers, and read-only visitors.
+- Staff creation, correction, deactivation, and reactivation without deleting historical records.
+- Excel and CSV roster imports that update existing payroll IDs and add new staff.
+
+### Attendance and leave
+
+- Expiring daily QR attendance sessions.
+- Employee verification using payroll/employee ID and registered phone details.
+- Duplicate check-in prevention, late classification, and optional GPS capture.
+- Supervised check-in for staff without suitable smartphones.
+- Automatic present, absent, late, annual-leave, and sick-off tallies.
+- Planned leave schedules and 30-, 14-, and 7-day reminder processing.
+- Approval and rejection workflows for leave and sick-off records.
+- Private uploads for sick sheets, medical certificates, leave forms, approvals, and return-to-work forms.
+
+### Field operations
+
+- Daily work descriptions, locations, quantities, units, staff counts, and challenges.
+- Separate complete and incomplete work status with outstanding-work notes.
+- Upload saved or WhatsApp JPG/PNG photos.
+- Take field photos directly from a supported phone.
+- Up to eight private field photos per work log.
+- Review and approval workflow before work appears in final reports.
+
+### Reports and AI
+
+- Daily, weekly, monthly, and custom reporting periods.
+- Attendance details, approved work, completion status, field photos, and recommendations.
+- Automatic report signature using the finaliser's account name and role.
+- Automatic generation date and time.
+- Immutable finalised reports retained in the report archive for appraisals and future reference.
+- Print-to-PDF layout and Excel-compatible CSV export.
+- Optional Groq AI narrative drafting using `llama-3.1-8b-instant`.
+- Local deterministic report fallback when AI is disabled, unavailable, or rate-limited.
+
+The AI payload excludes employee names, employee IDs, phone numbers, attendance rows, medical information, work descriptions, and challenge notes. AI output remains a draft and must be reviewed before finalisation.
+
+## Staff Roster Format
+
+Upload an `.xlsx` workbook or UTF-8 `.csv` containing these required fields:
+
+```text
+Names | Phone Numbers | Pay Roll Numbers | Status | Residence
+```
+
+Common heading variations are accepted. Payroll number becomes the Employee ID/User ID used during attendance verification.
+
+Supported roster statuses:
+
+```text
+ON DUTY
+ANNUAL LEAVE
+```
+
+Existing payroll IDs are updated and new IDs are added. Staff omitted from a later upload are not deleted automatically. Deactivate them from the staff register when necessary. Imported annual leave remains current until the record is changed back to on duty or a newer roster is uploaded.
+
+## Technology
+
+| Layer | Technology |
+|---|---|
+| Application | FastAPI, Python 3.12, Jinja2 |
+| Data access | SQLAlchemy 2 |
+| Production database | PostgreSQL with Psycopg 3 |
+| Local database | SQLite |
+| Excel import | OpenPyXL |
+| AI | Groq OpenAI-compatible API, optional |
+| Deployment | Docker and Railway |
+
+## Local Development
+
+Create an isolated environment and install development dependencies:
 
 ```bash
 python3 -m venv .venv
@@ -30,23 +89,22 @@ python3 -m venv .venv
 .venv/bin/uvicorn app.main:app --reload
 ```
 
-If Ubuntu's `python3-venv` package is unavailable:
+Open `http://127.0.0.1:8000`.
+
+Do not reuse development credentials in production. Supply your own local values when testing account setup:
+
+```bash
+export BOOTSTRAP_ADMIN_EMAIL="local-owner@example.test"
+export BOOTSTRAP_ADMIN_PASSWORD="<choose-a-local-password>"
+export OWNER_SETUP_TOKEN="<generate-a-separate-random-token>"
+```
+
+If Ubuntu does not provide `python3-venv`, dependencies can be installed into a local ignored directory:
 
 ```bash
 python3 -m pip install --target .packages --break-system-packages -r requirements-dev.txt
 PYTHONPATH=.packages python3 -m uvicorn app.main:app --reload
 ```
-
-Open `http://127.0.0.1:8000`.
-
-Development login:
-
-```text
-Email: officer@makina.local
-Password: ChangeMe123!
-```
-
-The application requires that password to be changed after login. Production refuses to start with the development password.
 
 ## Tests
 
@@ -54,40 +112,97 @@ The application requires that password to be changed after login. Production ref
 PYTHONPATH=.packages python3 -m pytest -q
 ```
 
-## Production with Docker
+## Railway Deployment
 
-1. Copy `.env.example` to `.env` and replace every credential and public URL.
-2. Set a separate strong `POSTGRES_PASSWORD` in `.env`.
-3. Configure approved SMTP details if email reminders will be sent.
-4. Keep `AI_ENABLED=false` until the Groq free-tier setup and data-processing terms are approved.
-5. Run `docker compose up --build -d`.
-6. Confirm `/health/ready` returns `{"status":"ready"}` through HTTPS.
-7. Sign in with the bootstrap administrator and immediately change its password.
+The repository includes `railway.json` and a production `Dockerfile`. Railway should use the Dockerfile command; leave the Railway custom Start Command empty.
 
-Only one web process should run the built-in reminder scheduler. If the service is scaled horizontally, move reminder processing to a dedicated worker or add a database scheduler lock.
-
-## Excel staff import
-
-Upload the initial roster as `.xlsx` or UTF-8 `.csv` using these required columns:
+Required application variables:
 
 ```text
-Names | Phone Numbers | Pay Roll Numbers | Status | Residence
+APP_ENV=production
+DATABASE_URL=<reference the Railway PostgreSQL DATABASE_URL>
+SECURE_COOKIES=true
+OWNER_SETUP_TOKEN=<one-time random owner setup token>
+DOCUMENT_ROOT=/app/data/documents
 ```
 
-Payroll number becomes the Employee ID/User ID. Supported statuses are `ON DUTY` and `ANNUAL LEAVE`. Existing payroll IDs are updated and new IDs are added. Omitted staff are not deleted automatically; deactivate them in the staff register. Import is transactional: any invalid row rejects the complete upload.
+Railway provides `PORT` and `RAILWAY_PUBLIC_DOMAIN` automatically. Do not create them manually.
 
-## Production approval gates
+After the first owner setup:
 
-Before entering real employee or medical data:
+1. Open `/setup` on the deployed domain.
+2. Create the permanent owner account.
+3. Remove `OWNER_SETUP_TOKEN` from Railway.
+4. Redeploy the application.
 
-- Complete a Kenya Data Protection Act impact assessment and approve retention periods.
-- Put the service behind managed HTTPS and restrict network/database access.
-- Arrange encrypted PostgreSQL and document-volume backups and test restoration.
-- Install malware scanning or use approved private object storage with scanning for uploaded files.
-- Configure county SSO/MFA if available; local passwords are the deployable fallback.
-- Confirm official report templates, logo use, attendance hours and approval authority.
-- Run a synthetic-data pilot and then a limited consented staff pilot.
+Attach a persistent Railway volume to:
 
-See `docs/IMPLEMENTATION_PLAN.md` and `docs/OPERATIONS.md`.
+```text
+/app/data/documents
+```
 
-Railway-specific setup and environment variables are documented in `docs/RAILWAY.md`.
+Scanned forms and field photos will be lost during redeployment if this volume is not attached.
+
+Optional SMTP variables:
+
+```text
+SMTP_HOST=<approved SMTP host>
+SMTP_PORT=587
+SMTP_USERNAME=<SMTP username>
+SMTP_PASSWORD=<SMTP password>
+SMTP_FROM=<approved sender address>
+```
+
+Optional Groq AI variables:
+
+```text
+AI_ENABLED=true
+AI_BASE_URL=https://api.groq.com/openai/v1
+AI_API_KEY=<Groq API key>
+AI_MODEL=llama-3.1-8b-instant
+```
+
+Enter Railway values without quotation marks. Never place actual passwords, database URLs, setup tokens, SMTP credentials, or API keys in GitHub.
+
+See [Railway deployment instructions](docs/RAILWAY.md) for the complete setup.
+
+## Security and Privacy
+
+- Server-side sessions, secure cookies, CSRF protection, and role checks protect administrative actions.
+- QR check-in verification attempts are rate-limited.
+- Sensitive uploads are stored outside public static files.
+- Medical files are restricted to authorised HR and owner roles.
+- Operational changes, approvals, downloads, exports, and access decisions are audited.
+- Finalised report snapshots are retained independently of later source-record edits.
+- Spreadsheet values are escaped during CSV exports to reduce formula-injection risk.
+
+Before entering real personnel or medical data:
+
+- Complete a Kenya Data Protection Act impact assessment.
+- Approve data retention and deletion periods.
+- Configure encrypted PostgreSQL and document-volume backups.
+- Test database and file restoration.
+- Add malware scanning or approved scanned private object storage.
+- Confirm official branding, report templates, attendance rules, and approval authority.
+- Use county SSO and MFA when they become available.
+
+If a real credential has ever been committed or shared publicly, removing it from a file is not sufficient. Revoke and rotate it immediately.
+
+## Health Checks
+
+```text
+GET /health/live
+GET /health/ready
+```
+
+Readiness verifies database connectivity and writable private document storage.
+
+## Documentation
+
+- [Implementation plan](docs/IMPLEMENTATION_PLAN.md)
+- [Operations guide](docs/OPERATIONS.md)
+- [Railway deployment](docs/RAILWAY.md)
+
+## License
+
+This project is licensed under the MIT License. See [LICENSE](LICENSE).
