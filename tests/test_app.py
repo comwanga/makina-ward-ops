@@ -17,9 +17,9 @@ from openpyxl import Workbook
 from app.database import Base, SessionLocal, engine, normalize_database_url
 from app.config import settings
 from app.main import app
-from app.models import AccessRequest, AbsenceRequest, Attendance, Document, Employee, ReminderDelivery, ReportRecord, User, WorkLog, WorkPhoto
+from app.models import AccessRequest, AbsenceRequest, Attendance, Document, Employee, ReminderDelivery, ReportRecord, User, WorkLog, WorkLogOperations, WorkPhoto, WorkPhotoStage
 from app.notifications import process_leave_reminders
-from app.reporting import structured_ai_payload
+from app.reporting import sample_period_photos, structured_ai_payload
 from app.services import daily_roster, today
 
 
@@ -76,8 +76,7 @@ def test_ai_payload_excludes_personal_and_free_text_data():
                     "activity": "Drainage clearing",
                     "location": "Makina Market",
                     "description": "Employee Jane cleared the drain",
-                    "quantity": 120,
-                    "unit": "metres",
+                    "number_of_trips": 3,
                     "staff_count": 6,
                     "challenges": "Medical details must remain private",
                 }
@@ -87,7 +86,17 @@ def test_ai_payload_excludes_personal_and_free_text_data():
     encoded = str(payload)
     assert "Jane" not in encoded
     assert "Medical details" not in encoded
-    assert payload["approved_work"][0]["quantity"] == 120
+    assert payload["approved_work"][0]["number_of_trips"] == 3
+
+
+def test_weekly_and_monthly_reports_sample_photos_by_stage():
+    work = [{"photos": [{"id": index, "stage": stage} for index in range(offset, offset + 6)]} for stage, offset in (("before", 1), ("during", 7), ("after", 13))]
+    daily = [{"photos": [dict(photo) for photo in item["photos"]]} for item in work]
+    sample_period_photos(daily, "daily")
+    assert sum(len(item["photos"]) for item in daily) == 18
+    sample_period_photos(work, "weekly")
+    assert sum(len(item["photos"]) for item in work) == 12
+    assert all(len(item["photos"]) == 4 for item in work)
 
 
 def test_owner_can_replace_bootstrap_account_once():
@@ -335,7 +344,12 @@ def test_work_log_final_report_and_csv_are_stable():
     with TestClient(app) as client:
         csrf = login(client)
         work_page = client.get("/work-logs")
-        assert 'name="photos" accept="image/*" multiple' in work_page.text
+        assert 'name="before_photos" accept="image/*" multiple' in work_page.text
+        assert 'name="during_photos" accept="image/*" multiple' in work_page.text
+        assert 'name="after_photos" accept="image/*" multiple' in work_page.text
+        assert 'placeholder="T-161"' in work_page.text
+        assert 'placeholder="BH13"' in work_page.text
+        assert 'name="unit"' not in work_page.text
         assert "capture=" not in work_page.text
         assert "WhatsApp photos" not in work_page.text
         work_response = client.post(
@@ -344,22 +358,40 @@ def test_work_log_final_report_and_csv_are_stable():
                 "work_date": today().isoformat(),
                 "activity": "Drainage clearing",
                 "location": "Makina Market",
+                "areas_roads": "Mashinani Road and Makina Market access road",
                 "description": "Cleared blocked roadside drainage",
-                "quantity": "120",
-                "unit": "metres",
+                "number_of_trips": "3",
+                "waste_transfer_involved": "true",
+                "truck_id": "T-161",
+                "backhoe_id": "BH13",
                 "staff_count": "6",
                 "challenges": "Heavy silt",
+                "cleanup_done": "true",
+                "cleanup_stakeholders": "Makina market traders",
+                "climate_team_count": "8",
                 "completion_status": "incomplete",
                 "outstanding_work": "Complete the final twenty metres",
                 "photo_caption": "Drainage cleared near the market",
                 "csrf_token": csrf,
             },
-            files={"photos": ("field.jpg", b"\xff\xd8\xff\xe0field-photo", "image/jpeg")},
+            files=[
+                ("before_photos", ("before.jpg", b"\xff\xd8\xff\xe0before-photo", "image/jpeg")),
+                ("during_photos", ("during.jpg", b"\xff\xd8\xff\xe0during-photo", "image/jpeg")),
+                ("after_photos", ("after.jpg", b"\xff\xd8\xff\xe0after-photo", "image/jpeg")),
+            ],
             follow_redirects=False,
         )
         assert work_response.status_code == 303
         with SessionLocal() as db:
             work = db.scalar(select(WorkLog))
+            operations = db.scalar(select(WorkLogOperations))
+            assert operations.areas_roads == "Mashinani Road and Makina Market access road"
+            assert operations.number_of_trips == 3
+            assert operations.truck_id == "T-161"
+            assert operations.backhoe_id == "BH13"
+            assert operations.cleanup_stakeholders == "Makina market traders"
+            assert operations.climate_team_count == 8
+            assert {item.stage for item in db.scalars(select(WorkPhotoStage)).all()} == {"before", "during", "after"}
         client.post(f"/work-logs/{work.id}/approve", data={"csrf_token": csrf, "review_note": "Verified"})
         final = client.post(
             "/reports/finalize",
@@ -375,6 +407,10 @@ def test_work_log_final_report_and_csv_are_stable():
         saved = client.get(f"/reports/{report.id}")
         assert "Cleared blocked roadside drainage" in saved.text
         assert "Complete the remaining twenty metres" in saved.text
+        assert "Mashinani Road and Makina Market access road" in saved.text
+        assert "T-161" in saved.text
+        assert "BH13" in saved.text
+        assert "Makina market traders" in saved.text
         assert "Makina Ward Officer" in saved.text
         with SessionLocal() as db:
             assert db.scalar(select(WorkPhoto))
@@ -383,6 +419,41 @@ def test_work_log_final_report_and_csv_are_stable():
         assert "Employee ID" in csv_response.text
         with SessionLocal() as db:
             assert db.get(ReportRecord, report.id).snapshot_json == snapshot_before
+
+
+def test_work_log_enforces_equipment_cleanup_and_photo_rules():
+    with TestClient(app) as client:
+        csrf = login(client)
+        base = {
+            "work_date": today().isoformat(),
+            "activity": "Waste removal",
+            "location": "Makina Ward",
+            "areas_roads": "Mashinani Road",
+            "description": "Removed accumulated waste",
+            "number_of_trips": "2",
+            "staff_count": "4",
+            "completion_status": "complete",
+            "csrf_token": csrf,
+        }
+        bad_equipment = client.post(
+            "/work-logs",
+            data={**base, "waste_transfer_involved": "true", "truck_id": "161"},
+        )
+        assert bad_equipment.status_code == 400
+        assert "format T-161" in bad_equipment.text
+        missing_cleanup_team = client.post(
+            "/work-logs",
+            data={**base, "cleanup_done": "true"},
+        )
+        assert missing_cleanup_team.status_code == 400
+        assert "cleanup stakeholders" in missing_cleanup_team.text
+        too_many_photos = client.post(
+            "/work-logs",
+            data=base,
+            files=[("before_photos", (f"before-{index}.jpg", b"\xff\xd8\xff\xe0photo", "image/jpeg")) for index in range(5)],
+        )
+        assert too_many_photos.status_code == 400
+        assert "at most 4 before" in too_many_photos.text
 
 
 def test_admin_can_create_user_and_import_staff_excel():

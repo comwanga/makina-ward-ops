@@ -207,6 +207,7 @@ class WorkLog(Base):
     created_at: Mapped[datetime] = mapped_column(DateTime)
     reviewed_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
     detail: Mapped["WorkLogDetail | None"] = relationship(back_populates="work_log", uselist=False)
+    operations: Mapped["WorkLogOperations | None"] = relationship(back_populates="work_log", uselist=False)
     photos: Mapped[list["WorkPhoto"]] = relationship(back_populates="work_log", order_by="WorkPhoto.id")
 
 
@@ -218,6 +219,22 @@ class WorkLogDetail(Base):
     completion_status: Mapped[str] = mapped_column(String(20), default="complete")
     outstanding_work: Mapped[str | None] = mapped_column(Text, nullable=True)
     work_log: Mapped[WorkLog] = relationship(back_populates="detail")
+
+
+class WorkLogOperations(Base):
+    __tablename__ = "work_log_operations"
+
+    id: Mapped[int] = mapped_column(primary_key=True)
+    work_log_id: Mapped[int] = mapped_column(ForeignKey("work_logs.id"), unique=True, index=True)
+    areas_roads: Mapped[str] = mapped_column(Text)
+    number_of_trips: Mapped[int] = mapped_column(Integer, default=0)
+    waste_transfer_involved: Mapped[bool] = mapped_column(Boolean, default=False)
+    truck_id: Mapped[str | None] = mapped_column(String(30), nullable=True)
+    backhoe_id: Mapped[str | None] = mapped_column(String(30), nullable=True)
+    cleanup_done: Mapped[bool] = mapped_column(Boolean, default=False)
+    cleanup_stakeholders: Mapped[str | None] = mapped_column(Text, nullable=True)
+    climate_team_count: Mapped[int] = mapped_column(Integer, default=0)
+    work_log: Mapped[WorkLog] = relationship(back_populates="operations")
 
 
 class WorkPhoto(Base):
@@ -234,6 +251,16 @@ class WorkPhoto(Base):
     uploaded_by: Mapped[int] = mapped_column(ForeignKey("users.id"))
     uploaded_at: Mapped[datetime] = mapped_column(DateTime)
     work_log: Mapped[WorkLog] = relationship(back_populates="photos")
+    stage_record: Mapped["WorkPhotoStage | None"] = relationship(back_populates="photo", uselist=False)
+
+
+class WorkPhotoStage(Base):
+    __tablename__ = "work_photo_stages"
+
+    id: Mapped[int] = mapped_column(primary_key=True)
+    photo_id: Mapped[int] = mapped_column(ForeignKey("work_photos.id"), unique=True, index=True)
+    stage: Mapped[str] = mapped_column(String(20))
+    photo: Mapped[WorkPhoto] = relationship(back_populates="stage_record")
 
 
 class ReportRecord(Base):
