@@ -32,8 +32,7 @@ Makina Ward Operations is a mobile-first workforce attendance and environment re
 
 - Daily work descriptions, locations, quantities, units, staff counts, and challenges.
 - Separate complete and incomplete work status with outstanding-work notes.
-- Upload saved or WhatsApp JPG/PNG photos.
-- Take field photos directly from a supported phone.
+- Select field photos from a phone gallery or take new photos with the phone camera.
 - Up to eight private field photos per work log.
 - Review and approval workflow before work appears in final reports.
 

@@ -334,6 +334,10 @@ def test_approved_leave_reconciles_roster():
 def test_work_log_final_report_and_csv_are_stable():
     with TestClient(app) as client:
         csrf = login(client)
+        work_page = client.get("/work-logs")
+        assert 'name="photos" accept="image/*" multiple' in work_page.text
+        assert "capture=" not in work_page.text
+        assert "WhatsApp photos" not in work_page.text
         work_response = client.post(
             "/work-logs",
             data={
