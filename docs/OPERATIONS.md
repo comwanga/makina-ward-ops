@@ -6,7 +6,7 @@
 2. Display the QR at the work site. Use supervised check-in only when necessary and record the reason.
 3. Review unaccounted staff. For staff who did not use the QR, record an audited supervised-present, confirmed-absent, or off-duty exception.
 4. Record work completed, structured output quantities, staff count and challenges.
-5. Mark work complete or incomplete and upload WhatsApp photos or take field photos directly.
+5. Mark work complete or incomplete, then select photos from the phone gallery or take new photos.
 6. Have an authorised reviewer approve requests and work logs.
 7. Review the AI-assisted narrative and recommendations, then sign and archive the daily report.
 
