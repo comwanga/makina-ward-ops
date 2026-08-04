@@ -16,6 +16,23 @@ from .services import now
 
 COOKIE_NAME = "makina_session"
 
+SCOPES = {
+    "attendance": "Attendance register",
+    "staff_register": "Staff register",
+    "work_logs": "Daily work logs",
+    "absences": "Leave and sick-off",
+    "reports": "Reports and archive",
+    "audit": "Audit history",
+}
+
+
+def has_scope(user: User, scope: str) -> bool:
+    if user.role == "system_admin":
+        return True
+    if not user.permissions:
+        return True
+    return scope in {part.strip() for part in user.permissions.split(",")}
+
 
 def hash_password(password: str, salt: bytes | None = None) -> str:
     salt = salt or secrets.token_bytes(16)

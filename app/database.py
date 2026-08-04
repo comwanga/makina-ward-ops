@@ -1,7 +1,7 @@
 import os
 from pathlib import Path
 
-from sqlalchemy import create_engine, event
+from sqlalchemy import create_engine, event, inspect, text
 from sqlalchemy.orm import DeclarativeBase, sessionmaker
 
 
@@ -34,6 +34,23 @@ if DATABASE_URL.startswith("sqlite"):
         cursor.execute("PRAGMA foreign_keys=ON")
         cursor.close()
 SessionLocal = sessionmaker(bind=engine, expire_on_commit=False)
+
+COLUMN_MIGRATIONS = {
+    "users": {"permissions": "TEXT"},
+    "access_requests": {"target_user_id": "INTEGER", "requested_scope": "VARCHAR(60)"},
+}
+
+
+def run_migrations() -> None:
+    inspector = inspect(engine)
+    existing = {table: {col["name"] for col in inspector.get_columns(table)} for table in inspector.get_table_names()}
+    with engine.begin() as connection:
+        for table, columns in COLUMN_MIGRATIONS.items():
+            if table not in existing:
+                continue
+            for column, ddl in columns.items():
+                if column not in existing[table]:
+                    connection.execute(text(f"ALTER TABLE {table} ADD COLUMN {column} {ddl}"))
 
 
 def get_db():

@@ -20,6 +20,10 @@ Use **Attendance history** to select any calendar date, review check-in times an
 
 Upload the official Excel list under **Staff register**. The Employee ID must be 11 digits and start with the four-digit year, for example `20230464669`. Staff check in with the exact Employee ID saved in the register; phone numbers are not used for check-in verification. Existing IDs are updated. Correct typing errors with **Edit** and use **Deactivate** rather than deleting former staff. Imported annual leave affects the current daily tally until the record is changed back to on duty or a newer roster is uploaded.
 
+## User access
+
+Under **User access**, the owner approves sign-ups and picks the areas each account can open: attendance, staff register, daily work, leave and sick-off, reports, and audit history. A benchmark visitor who is not granted the staff register will see an access-denied message and can submit a request for that area, which appears in the approval queue. When a user has finished accessing the system, use **Revoke access** to disable the account and end all active sessions immediately. Use **Restore access** if they need to come back later.
+
 ## Scanned forms
 
 Under **Leave & sick-off**, scan or upload sick sheets, medical certificates, leave forms, approvals and return-to-work forms. These files remain private to authorised HR/owner roles.
