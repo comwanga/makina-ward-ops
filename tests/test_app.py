@@ -295,7 +295,9 @@ def test_admin_can_create_user_and_import_staff_excel():
         assert created.status_code == 303
         workbook = Workbook()
         sheet = workbook.active
-        sheet.append(["Names", "Phone Numbers", "Pay Roll Numbers", "Status", "Residence"])
+        sheet.append(["MAKINA WARD GREEN ARMY STAFF RETURN"])
+        sheet.append(["Updated staff list"])
+        sheet.append(["Employee Name(s)", "Mobile/Tel. No.", "Payroll Number / Employee ID / User ID", "Duty Status", "Area of Residence"])
         sheet.append(["Jane Example", "0711111111", "NCC-2001", "ANNUAL LEAVE", "Makina"])
         excel = BytesIO()
         workbook.save(excel)
