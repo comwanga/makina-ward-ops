@@ -6,12 +6,21 @@
 2. Display the QR at the work site. Use supervised check-in only when necessary and record the reason.
 3. Review unaccounted staff and submitted leave/sick-off requests.
 4. Record work completed, structured output quantities, staff count and challenges.
-5. Have an authorised reviewer approve requests and work logs.
-6. Preview and finalise the daily report. Print to PDF or download CSV as required.
+5. Mark work complete or incomplete and upload WhatsApp photos or take field photos directly.
+6. Have an authorised reviewer approve requests and work logs.
+7. Review the AI-assisted narrative and recommendations, then sign and archive the daily report.
 
 ## Weekly and monthly reports
 
-Open Reports, choose the period and preview it. Draft reports can be regenerated; finalised reports are immutable snapshots. Correct source data first and create a new report if a previously finalised report must be superseded.
+Open Reports, choose the period and preview it. Reports include recommendations, field photos, the owner's full name, and generation date/time. Finalised reports are immutable archived snapshots for appraisal and future reference.
+
+## Staff roster
+
+Upload the official Excel list under **Staff register**. Payroll number is the Employee ID/User ID used during attendance verification. Existing IDs are updated. Correct typing errors with **Edit** and use **Deactivate** rather than deleting former staff. Imported annual leave affects the current daily tally until the record is changed back to on duty or a newer roster is uploaded.
+
+## Scanned forms
+
+Under **Leave & sick-off**, scan or upload sick sheets, medical certificates, leave forms, approvals and return-to-work forms. These files remain private to authorised HR/owner roles.
 
 ## Leave reminders
 

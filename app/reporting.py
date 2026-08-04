@@ -70,6 +70,9 @@ def build_snapshot(db: Session, start: date, end: date) -> dict:
             "unit": item.unit,
             "staff_count": item.staff_count,
             "challenges": item.challenges,
+            "completion_status": item.detail.completion_status if item.detail else "complete",
+            "outstanding_work": item.detail.outstanding_work if item.detail else None,
+            "photos": [{"id": photo.id, "caption": photo.caption, "sha256": photo.sha256} for photo in item.photos],
         }
         for item in work_logs
     ]
@@ -97,6 +100,13 @@ def deterministic_narrative(snapshot: dict) -> str:
     return text
 
 
+def deterministic_recommendations(snapshot: dict) -> str:
+    incomplete = [item["activity"] for item in snapshot["work_logs"] if item.get("completion_status") == "incomplete"]
+    if incomplete:
+        return f"Prioritise follow-up and completion of: {', '.join(sorted(set(incomplete)))}. Continue monitoring attendance and documented field outputs."
+    return "Sustain the completed activities, continue routine monitoring, and address emerging operational challenges promptly."
+
+
 def structured_ai_payload(snapshot: dict) -> dict:
     approved_work = [
         {
@@ -106,6 +116,7 @@ def structured_ai_payload(snapshot: dict) -> dict:
             "quantity": item["quantity"],
             "unit": item["unit"],
             "staff_count": item["staff_count"],
+            "completion_status": item.get("completion_status", "complete"),
         }
         for item in snapshot["work_logs"]
     ]

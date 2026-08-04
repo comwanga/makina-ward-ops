@@ -66,16 +66,15 @@ PYTHONPATH=.packages python3 -m pytest -q
 
 Only one web process should run the built-in reminder scheduler. If the service is scaled horizontally, move reminder processing to a dedicated worker or add a database scheduler lock.
 
-## CSV staff import
+## Excel staff import
 
-Required UTF-8 headers:
+Upload the initial roster as `.xlsx` or UTF-8 `.csv` using these required columns:
 
-```csv
-employee_number,full_name,phone,role,email
-NCC-1001,Example Employee,0712345678,Green Army Staff,employee@example.go.ke
+```text
+Names | Phone Numbers | Pay Roll Numbers | Status | Residence
 ```
 
-Import is transactional: any invalid row rejects the complete import.
+Payroll number becomes the Employee ID/User ID. Supported statuses are `ON DUTY` and `ANNUAL LEAVE`. Existing payroll IDs are updated and new IDs are added. Omitted staff are not deleted automatically; deactivate them in the staff register. Import is transactional: any invalid row rejects the complete upload.
 
 ## Production approval gates
 

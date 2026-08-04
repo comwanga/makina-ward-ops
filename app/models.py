@@ -16,6 +16,18 @@ class Employee(Base):
     email: Mapped[str | None] = mapped_column(String(160), nullable=True)
     role: Mapped[str] = mapped_column(String(80), default="Green Army Staff")
     active: Mapped[bool] = mapped_column(default=True)
+    profile: Mapped["EmployeeProfile | None"] = relationship(back_populates="employee", uselist=False)
+
+
+class EmployeeProfile(Base):
+    __tablename__ = "employee_profiles"
+
+    id: Mapped[int] = mapped_column(primary_key=True)
+    employee_id: Mapped[int] = mapped_column(ForeignKey("employees.id"), unique=True, index=True)
+    residence: Mapped[str | None] = mapped_column(String(160), nullable=True)
+    roster_status: Mapped[str] = mapped_column(String(30), default="on_duty")
+    updated_at: Mapped[datetime] = mapped_column(DateTime)
+    employee: Mapped[Employee] = relationship(back_populates="profile")
 
 
 class AttendanceSession(Base):
@@ -164,6 +176,16 @@ class Document(Base):
     uploaded_by: Mapped[int] = mapped_column(ForeignKey("users.id"))
     uploaded_at: Mapped[datetime] = mapped_column(DateTime)
     absence_request: Mapped[AbsenceRequest | None] = relationship(back_populates="documents")
+    classification: Mapped["DocumentClassification | None"] = relationship(back_populates="document", uselist=False)
+
+
+class DocumentClassification(Base):
+    __tablename__ = "document_classifications"
+
+    id: Mapped[int] = mapped_column(primary_key=True)
+    document_id: Mapped[int] = mapped_column(ForeignKey("documents.id"), unique=True, index=True)
+    category: Mapped[str] = mapped_column(String(40))
+    document: Mapped[Document] = relationship(back_populates="classification")
 
 
 class WorkLog(Base):
@@ -184,6 +206,34 @@ class WorkLog(Base):
     review_note: Mapped[str | None] = mapped_column(Text, nullable=True)
     created_at: Mapped[datetime] = mapped_column(DateTime)
     reviewed_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
+    detail: Mapped["WorkLogDetail | None"] = relationship(back_populates="work_log", uselist=False)
+    photos: Mapped[list["WorkPhoto"]] = relationship(back_populates="work_log", order_by="WorkPhoto.id")
+
+
+class WorkLogDetail(Base):
+    __tablename__ = "work_log_details"
+
+    id: Mapped[int] = mapped_column(primary_key=True)
+    work_log_id: Mapped[int] = mapped_column(ForeignKey("work_logs.id"), unique=True, index=True)
+    completion_status: Mapped[str] = mapped_column(String(20), default="complete")
+    outstanding_work: Mapped[str | None] = mapped_column(Text, nullable=True)
+    work_log: Mapped[WorkLog] = relationship(back_populates="detail")
+
+
+class WorkPhoto(Base):
+    __tablename__ = "work_photos"
+
+    id: Mapped[int] = mapped_column(primary_key=True)
+    work_log_id: Mapped[int] = mapped_column(ForeignKey("work_logs.id"), index=True)
+    storage_key: Mapped[str] = mapped_column(String(100), unique=True)
+    original_filename: Mapped[str] = mapped_column(String(200))
+    content_type: Mapped[str] = mapped_column(String(80))
+    size_bytes: Mapped[int] = mapped_column(Integer)
+    sha256: Mapped[str] = mapped_column(String(64))
+    caption: Mapped[str | None] = mapped_column(String(240), nullable=True)
+    uploaded_by: Mapped[int] = mapped_column(ForeignKey("users.id"))
+    uploaded_at: Mapped[datetime] = mapped_column(DateTime)
+    work_log: Mapped[WorkLog] = relationship(back_populates="photos")
 
 
 class ReportRecord(Base):
