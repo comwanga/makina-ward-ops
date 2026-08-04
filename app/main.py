@@ -224,7 +224,7 @@ def dashboard(request: Request, auth: AuthContext | None = Depends(optional_user
     work_logs = db.scalars(select(WorkLog).order_by(WorkLog.work_date.desc(), WorkLog.id.desc()).limit(5)).all()
     deliveries = db.scalars(select(ReminderDelivery).order_by(ReminderDelivery.created_at.desc()).limit(5)).all()
     pending_access = db.scalars(select(AccessRequest).where(AccessRequest.status == "pending").order_by(AccessRequest.created_at)).all() if auth.user.role == "system_admin" else []
-    manual_candidates = [row["employee"] for row in data["roster"] if row["status"] == "absent"]
+    manual_candidates = [row["employee"] for row in data["roster"] if row["manual_editable"]]
     return templates.TemplateResponse(
         request=request,
         name="dashboard.html",
@@ -333,7 +333,7 @@ def supervised_attendance(
     auth: AuthContext = Depends(require_roles("ward_officer", "system_admin")), db: Session = Depends(get_db),
 ):
     verify_csrf(auth, csrf_token)
-    if len(reason.strip()) < 5 or attendance_status not in {"present", "absent", "off_duty"}:
+    if len(reason.strip()) < 5 or attendance_status not in {"present", "absent", "off_duty", "sick_off"}:
         raise HTTPException(400, "A reason is required for supervised attendance")
     employee = db.get(Employee, employee_id)
     session = db.scalar(select(AttendanceSession).where(AttendanceSession.work_date == today()).order_by(AttendanceSession.created_at.desc()))
@@ -341,7 +341,7 @@ def supervised_attendance(
         raise HTTPException(404, "Employee or today's attendance session was not found")
     existing = db.scalar(select(Attendance).where(Attendance.employee_id == employee.id, Attendance.work_date == today()))
     roster_row = next((row for row in daily_roster(db, today()) if row["employee"].id == employee.id), None)
-    if existing or not roster_row or roster_row["status"] != "absent":
+    if existing or not roster_row or not roster_row["manual_editable"]:
         raise HTTPException(409, "Manual status is only allowed for staff who did not check in and remain absent")
     db.add(Attendance(employee_id=employee.id, session_id=session.id, work_date=today(), checked_at=now(), status=attendance_status))
     try:

@@ -45,19 +45,24 @@ def daily_roster(db: Session, work_date: date) -> list[dict]:
     for employee in employees:
         record = attendance.get(employee.id)
         absence = absence_by_employee.get(employee.id)
-        if record:
+        manual_editable = False
+        if record and record.status in {"present", "late"}:
             status = record.status
-            detail = f"Manual status at {record.checked_at:%H:%M}" if record.status in {"absent", "off_duty"} else record.checked_at.strftime("%H:%M")
+            detail = record.checked_at.strftime("%H:%M")
         elif absence:
             status = "sick_off" if absence.kind == "sick_off" else ("official_duty" if absence.kind == "official_duty" else "leave")
             detail = f"Returns {absence.return_date.strftime('%d %b')}"
+        elif record:
+            status = record.status
+            detail = f"Manual status at {record.checked_at:%H:%M}"
         elif employee.profile and employee.profile.roster_status == "annual_leave":
             status = "leave"
             detail = "Annual leave (staff roster)"
         else:
             status = "absent"
             detail = "No check-in"
-        rows.append({"employee": employee, "status": status, "detail": detail})
+            manual_editable = True
+        rows.append({"employee": employee, "status": status, "detail": detail, "manual_editable": manual_editable})
     return rows
 
 
