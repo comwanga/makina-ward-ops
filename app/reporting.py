@@ -10,7 +10,7 @@ from .models import AttendanceSession, WorkLog
 from .services import daily_roster
 
 
-STATUSES = ("present", "late", "absent", "leave", "sick_off", "official_duty")
+STATUSES = ("present", "late", "absent", "off_duty", "leave", "sick_off", "official_duty")
 
 
 def date_range(start: date, end: date):

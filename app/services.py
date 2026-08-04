@@ -47,7 +47,7 @@ def daily_roster(db: Session, work_date: date) -> list[dict]:
         absence = absence_by_employee.get(employee.id)
         if record:
             status = record.status
-            detail = record.checked_at.strftime("%H:%M")
+            detail = f"Manual status at {record.checked_at:%H:%M}" if record.status in {"absent", "off_duty"} else record.checked_at.strftime("%H:%M")
         elif absence:
             status = "sick_off" if absence.kind == "sick_off" else ("official_duty" if absence.kind == "official_duty" else "leave")
             detail = f"Returns {absence.return_date.strftime('%d %b')}"
@@ -63,7 +63,7 @@ def daily_roster(db: Session, work_date: date) -> list[dict]:
 
 def dashboard_data(db: Session, work_date: date) -> dict:
     roster = daily_roster(db, work_date)
-    counts = {status: 0 for status in ("present", "late", "absent", "sick_off", "leave")}
+    counts = {status: 0 for status in ("present", "late", "absent", "off_duty", "sick_off", "leave")}
     for row in roster:
         counts[row["status"]] = counts.get(row["status"], 0) + 1
 

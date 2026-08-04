@@ -201,6 +201,33 @@ def test_short_phone_suffix_is_rejected():
         assert "exactly the last four" in response.text
 
 
+def test_manual_exception_only_updates_staff_without_qr_checkin():
+    with TestClient(app) as client:
+        csrf = login(client)
+        create_attendance_session(client, csrf)
+        with SessionLocal() as db:
+            employee = db.scalar(select(Employee).where(Employee.employee_number == "NCC-1042"))
+            employee_id = employee.id
+        updated = client.post(
+            "/attendance/supervised",
+            data={"employee_id": employee_id, "attendance_status": "off_duty", "reason": "Approved weekly off duty", "csrf_token": csrf},
+            follow_redirects=False,
+        )
+        assert updated.status_code == 303
+        with SessionLocal() as db:
+            row = next(item for item in daily_roster(db, today()) if item["employee"].id == employee_id)
+            assert row["status"] == "off_duty"
+        duplicate = client.post(
+            "/attendance/supervised",
+            data={"employee_id": employee_id, "attendance_status": "absent", "reason": "Should not replace record", "csrf_token": csrf},
+        )
+        assert duplicate.status_code == 409
+        history = client.get(f"/attendance/history?report_date={today().isoformat()}")
+        assert history.status_code == 200
+        assert "off duty" in history.text
+        assert "Generate daily staff report" in history.text
+
+
 def test_approved_leave_reconciles_roster():
     with TestClient(app) as client:
         csrf = login(client)
