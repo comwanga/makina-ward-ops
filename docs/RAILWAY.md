@@ -9,7 +9,7 @@
 5. Generate a public domain under the application service Networking settings.
 6. Add a persistent volume mounted at `/app/data/documents` before accepting medical uploads.
 
-Railway reads `railway.json`, builds the included `Dockerfile`, starts one application replica on `$PORT`, and checks `/health/ready` before considering a deployment healthy.
+Railway reads `railway.json`, builds the included `Dockerfile`, starts one application replica on its assigned `PORT`, and checks `/health/ready` before considering a deployment healthy. Leave the Railway service's custom Start Command empty so the tested Dockerfile command is used.
 
 ## Required variables
 
