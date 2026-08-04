@@ -1,0 +1,10 @@
+.venv/
+.packages/
+__pycache__/
+.pytest_cache/
+*.pyc
+data/*.db
+data/uploads/*
+!data/uploads/.gitkeep
+data/documents/*
+!data/documents/.gitkeep
