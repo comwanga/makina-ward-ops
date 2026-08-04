@@ -17,6 +17,7 @@ from app.config import settings
 from app.main import app
 from app.models import AccessRequest, AbsenceRequest, Attendance, Document, Employee, ReminderDelivery, ReportRecord, User, WorkLog
 from app.notifications import process_leave_reminders
+from app.reporting import structured_ai_payload
 from app.services import daily_roster, today
 
 
@@ -59,6 +60,32 @@ def test_health_and_anonymous_boundary():
 def test_railway_postgres_url_uses_installed_driver():
     assert normalize_database_url("postgresql://user:pass@host/db") == "postgresql+psycopg://user:pass@host/db"
     assert normalize_database_url("postgres://user:pass@host/db") == "postgresql+psycopg://user:pass@host/db"
+
+
+def test_ai_payload_excludes_personal_and_free_text_data():
+    payload = structured_ai_payload(
+        {
+            "start_date": "2026-08-01",
+            "end_date": "2026-08-01",
+            "totals": {"present": 6, "absent": 1},
+            "work_logs": [
+                {
+                    "date": "2026-08-01",
+                    "activity": "Drainage clearing",
+                    "location": "Makina Market",
+                    "description": "Employee Jane cleared the drain",
+                    "quantity": 120,
+                    "unit": "metres",
+                    "staff_count": 6,
+                    "challenges": "Medical details must remain private",
+                }
+            ],
+        }
+    )
+    encoded = str(payload)
+    assert "Jane" not in encoded
+    assert "Medical details" not in encoded
+    assert payload["approved_work"][0]["quantity"] == 120
 
 
 def test_owner_can_replace_bootstrap_account_once():

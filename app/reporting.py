@@ -97,15 +97,30 @@ def deterministic_narrative(snapshot: dict) -> str:
     return text
 
 
+def structured_ai_payload(snapshot: dict) -> dict:
+    approved_work = [
+        {
+            "date": item["date"],
+            "activity": item["activity"],
+            "location": item["location"],
+            "quantity": item["quantity"],
+            "unit": item["unit"],
+            "staff_count": item["staff_count"],
+        }
+        for item in snapshot["work_logs"]
+    ]
+    return {
+        "period": [snapshot["start_date"], snapshot["end_date"]],
+        "attendance_totals": snapshot["totals"],
+        "approved_work": approved_work,
+    }
+
+
 def ai_narrative(snapshot: dict) -> str:
     fallback = deterministic_narrative(snapshot)
     if not settings.ai_enabled or not settings.ai_api_key:
         return fallback
-    safe_payload = {
-        "period": [snapshot["start_date"], snapshot["end_date"]],
-        "attendance_totals": snapshot["totals"],
-        "approved_work": snapshot["work_logs"],
-    }
+    safe_payload = structured_ai_payload(snapshot)
     try:
         response = httpx.post(
             f"{settings.ai_base_url.rstrip('/')}/chat/completions",
@@ -113,8 +128,9 @@ def ai_narrative(snapshot: dict) -> str:
             json={
                 "model": settings.ai_model,
                 "temperature": 0.1,
+                "max_tokens": 600,
                 "messages": [
-                    {"role": "system", "content": "Draft a concise formal ward operations report using only supplied facts. Never invent names, quantities, places or activities."},
+                    {"role": "system", "content": "Draft a concise formal Nairobi ward environment operations report using only supplied facts. Never invent names, quantities, places, activities, causes or recommendations. Clearly identify missing information instead of guessing."},
                     {"role": "user", "content": json.dumps(safe_payload)},
                 ],
             },

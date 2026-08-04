@@ -45,16 +45,18 @@ SMTP_PASSWORD=<SMTP password>
 SMTP_FROM=<approved sender address>
 ```
 
-## Optional AI variables
+## Free Groq AI variables
 
-Keep AI disabled until the provider and data-processing terms are approved.
+Groq offers a rate-limited free plan suitable for light report drafting. Create an account at `https://console.groq.com`, open **API Keys**, and create a new key. Add the key only in Railway; never put it in GitHub or application source code.
 
 ```text
-AI_ENABLED=false
-AI_BASE_URL=https://api.openai.com/v1
-AI_API_KEY=<provider key>
-AI_MODEL=gpt-4o-mini
+AI_ENABLED=true
+AI_BASE_URL=https://api.groq.com/openai/v1
+AI_API_KEY=<your Groq API key>
+AI_MODEL=llama-3.1-8b-instant
 ```
+
+The integration sends only the reporting period, attendance totals, and structured approved work facts: date, activity, location, quantity, unit and staff count. It excludes employee names, IDs, phone numbers, attendance rows, medical data, free-text descriptions and challenges. AI output is always a draft and must be reviewed before finalisation. If Groq is unavailable or a free-tier limit is reached, the application automatically produces its local non-AI narrative instead.
 
 ## First deployment checks
 
