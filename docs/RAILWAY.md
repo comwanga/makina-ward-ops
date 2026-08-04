@@ -19,8 +19,13 @@ DATABASE_URL=${{Postgres.DATABASE_URL}}
 SECURE_COOKIES=true
 BOOTSTRAP_ADMIN_EMAIL=<your officer email>
 BOOTSTRAP_ADMIN_PASSWORD=<a unique random password of at least 20 characters>
+OWNER_SETUP_TOKEN=<a separate random one-time token of at least 32 characters>
 DOCUMENT_ROOT=/app/data/documents
 ```
+
+After deployment, open `/setup`, enter `OWNER_SETUP_TOKEN`, and create your permanent owner name, email and password. You are signed in automatically. Remove `OWNER_SETUP_TOKEN` from Railway after setup and redeploy. Existing installations can instead sign in once with the bootstrap account and change their email, name and password under **My account**.
+
+Visitors use `/register` to request benchmark access. They cannot sign in until the owner approves them under **User access**. Approved applicants receive the fixed `read_only` role and cannot perform officer or administrator changes.
 
 Railway supplies `RAILWAY_PUBLIC_DOMAIN` after a public domain is generated. The application automatically uses it for QR check-in links. `PUBLIC_BASE_URL` is only required when using a custom domain:
 
