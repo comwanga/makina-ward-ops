@@ -90,3 +90,5 @@ Before entering real employee or medical data:
 - Run a synthetic-data pilot and then a limited consented staff pilot.
 
 See `docs/IMPLEMENTATION_PLAN.md` and `docs/OPERATIONS.md`.
+
+Railway-specific setup and environment variables are documented in `docs/RAILWAY.md`.

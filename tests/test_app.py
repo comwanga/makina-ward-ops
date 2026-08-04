@@ -12,7 +12,7 @@ os.environ["APP_ENV"] = "development"
 from fastapi.testclient import TestClient
 from sqlalchemy import select
 
-from app.database import Base, SessionLocal, engine
+from app.database import Base, SessionLocal, engine, normalize_database_url
 from app.main import app
 from app.models import AbsenceRequest, Attendance, Document, Employee, ReminderDelivery, ReportRecord, User, WorkLog
 from app.notifications import process_leave_reminders
@@ -53,6 +53,11 @@ def test_health_and_anonymous_boundary():
         assert client.get("/health/ready").json() == {"status": "ready"}
         assert client.get("/", follow_redirects=False).status_code == 303
         assert client.post("/sessions", data={}).status_code == 401
+
+
+def test_railway_postgres_url_uses_installed_driver():
+    assert normalize_database_url("postgresql://user:pass@host/db") == "postgresql+psycopg://user:pass@host/db"
+    assert normalize_database_url("postgres://user:pass@host/db") == "postgresql+psycopg://user:pass@host/db"
 
 
 def test_csrf_is_required_for_privileged_changes():

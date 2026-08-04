@@ -3,6 +3,7 @@ import asyncio
 import hashlib
 import io
 import json
+import os
 import re
 import secrets
 from contextlib import asynccontextmanager
@@ -606,7 +607,7 @@ def liveness():
 @app.get("/health/ready")
 def readiness(db: Session = Depends(get_db)):
     db.execute(text("SELECT 1"))
-    if not settings.document_root.is_dir():
+    if not settings.document_root.is_dir() or not os.access(settings.document_root, os.W_OK):
         raise HTTPException(503, "Document storage unavailable")
     return {"status": "ready"}
 
