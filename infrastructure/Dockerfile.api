@@ -1,0 +1,28 @@
+# Multi-stage build for the NestJS API.
+FROM node:20-bookworm-slim AS build
+RUN corepack enable && corepack prepare pnpm@8.15.9 --activate
+WORKDIR /app
+
+COPY . .
+RUN pnpm install --frozen-lockfile
+
+# Prisma generate needs a URL to satisfy schema env resolution at build time;
+# the value is not used (no connection is made during generate).
+ENV DATABASE_URL=postgresql://build:build@localhost:5432/build
+RUN pnpm db:generate \
+  && pnpm --filter @ward-ops/contracts build \
+  && pnpm --filter @ward-ops/validation build \
+  && pnpm --filter @ward-ops/database build \
+  && pnpm --filter @ward-ops/api build
+
+FROM node:20-bookworm-slim AS runtime
+RUN corepack enable \
+  && apt-get update \
+  && apt-get install -y --no-install-recommends openssl \
+  && rm -rf /var/lib/apt/lists/*
+ENV NODE_ENV=production
+WORKDIR /app
+COPY --from=build /app ./
+USER node
+EXPOSE 4000
+CMD ["node", "apps/api/dist/main.js"]
