@@ -1,0 +1,250 @@
+import { BadRequestException, ConflictException, ForbiddenException, Inject, Injectable, UnauthorizedException } from "@nestjs/common";
+import { PrismaService } from "../prisma/prisma.service";
+import { APP_CONFIG } from "../config/config.module";
+import type { AppConfig } from "../config/config";
+import { AuditService } from "../audit/audit.service";
+import { hashPassword, hashToken, randomCsrfToken, randomSessionToken, verifyPassword } from "../common/crypto";
+import { sessionExpiry, AuthContext, AuthAssignment } from "./auth-context";
+import { LoginThrottleService } from "./login-throttle.service";
+
+export interface AuthUserSummary {
+  id: string;
+  email: string;
+  displayName: string;
+  active: boolean;
+  mustChangePassword: boolean;
+  assignments: AuthAssignment[];
+}
+
+export interface LoginResult {
+  token: string;
+  csrfToken: string;
+  expiresAt: Date;
+  user: AuthUserSummary;
+}
+
+@Injectable()
+export class AuthService {
+  constructor(
+    @Inject(APP_CONFIG) private readonly config: AppConfig,
+    private readonly prisma: PrismaService,
+    private readonly throttle: LoginThrottleService,
+    private readonly audit: AuditService,
+  ) {}
+
+  async bootstrapAdmin(input: {
+    setupToken: string;
+    email: string;
+    password: string;
+    displayName?: string;
+  }): Promise<AuthUserSummary> {
+    if (!this.config.ownerSetupToken) {
+      throw new ForbiddenException("Owner setup is not enabled");
+    }
+    if (input.setupToken !== this.config.ownerSetupToken) {
+      throw new ForbiddenException("Invalid setup token");
+    }
+
+    const existingAdmin = await this.prisma.client.user.findFirst({
+      where: { assignments: { some: { role: { code: "SYSTEM_ADMIN" } } } },
+    });
+    if (existingAdmin) {
+      throw new ConflictException("A system owner already exists");
+    }
+
+    const county = await this.prisma.client.county.findFirst({ where: { code: "NCC" } });
+    if (!county) {
+      throw new ConflictException("Reference organisation data is missing");
+    }
+    const role = await this.prisma.client.role.findUnique({ where: { code: "SYSTEM_ADMIN" } });
+    if (!role) {
+      throw new ConflictException("SYSTEM_ADMIN role is missing from seed data");
+    }
+
+    const user = await this.prisma.client.user.create({
+      data: {
+        email: input.email,
+        displayName: input.displayName ?? "System Owner",
+        passwordHash: hashPassword(input.password),
+        active: true,
+        mustChangePassword: false,
+        assignments: {
+          create: {
+            roleId: role.id,
+            scopeType: "COUNTY",
+            countyId: county.id,
+          },
+        },
+      },
+      include: { assignments: { include: { role: true } } },
+    });
+
+    await this.audit.record({
+      action: "AUTH.BOOTSTRAP",
+      targetType: "User",
+      targetId: user.id,
+      scopeType: "COUNTY",
+      scopeId: county.id,
+      details: "System owner created via setup token",
+    });
+
+    return toSummary(user);
+  }
+
+  async login(input: { email: string; password: string }, meta: { sourceIp?: string; requestId?: string }): Promise<LoginResult> {
+    const key = `${input.email}|${meta.sourceIp ?? "unknown"}`;
+    this.throttle.check(key);
+
+    const user = await this.prisma.client.user.findUnique({ where: { email: input.email } });
+    if (!user || !verifyPassword(input.password, user.passwordHash)) {
+      this.throttle.recordFailure(key);
+      await this.audit.record({
+        action: "AUTH.LOGIN_FAILED",
+        targetType: "User",
+        targetId: user?.id,
+        sourceIp: meta.sourceIp,
+        requestId: meta.requestId,
+        details: "Invalid email or password",
+      });
+      throw new UnauthorizedException("Invalid email or password");
+    }
+    if (!user.active) {
+      this.throttle.recordFailure(key);
+      await this.audit.record({
+        action: "AUTH.LOGIN_DISABLED",
+        targetType: "User",
+        targetId: user.id,
+        sourceIp: meta.sourceIp,
+        requestId: meta.requestId,
+      });
+      throw new UnauthorizedException("Invalid email or password");
+    }
+
+    this.throttle.recordSuccess(key);
+    const token = randomSessionToken();
+    const expiresAt = sessionExpiry(this.config);
+    const session = await this.prisma.client.userSession.create({
+      data: {
+        userId: user.id,
+        tokenHash: hashToken(token),
+        csrfToken: randomCsrfToken(),
+        expiresAt,
+        lastSeenAt: new Date(),
+      },
+    });
+
+    await this.audit.record({
+      action: "AUTH.LOGIN",
+      targetType: "User",
+      targetId: user.id,
+      actorUserId: user.id,
+      sourceIp: meta.sourceIp,
+      requestId: meta.requestId,
+    });
+
+    const withAssignments = await this.loadUserWithAssignments(user.id);
+    return {
+      token,
+      csrfToken: session.csrfToken,
+      expiresAt,
+      user: withAssignments,
+    };
+  }
+
+  async logout(sessionId: string, meta: { sourceIp?: string; requestId?: string }): Promise<void> {
+    const session = await this.prisma.client.userSession.findUnique({ where: { id: sessionId } });
+    if (session && !session.revokedAt) {
+      await this.prisma.client.userSession.update({
+        where: { id: sessionId },
+        data: { revokedAt: new Date() },
+      });
+      await this.audit.record({
+        action: "AUTH.LOGOUT",
+        targetType: "User",
+        targetId: session.userId,
+        actorUserId: session.userId,
+        sourceIp: meta.sourceIp,
+        requestId: meta.requestId,
+      });
+    }
+  }
+
+  async me(auth: AuthContext): Promise<AuthUserSummary & { capabilities: AuthContext["capabilities"]; csrfToken: string }> {
+    const user = await this.loadUserWithAssignments(auth.userId);
+    return { ...user, capabilities: auth.capabilities, csrfToken: auth.csrfToken };
+  }
+
+  async changePassword(
+    auth: AuthContext,
+    input: { currentPassword: string; newPassword: string },
+    meta: { sourceIp?: string; requestId?: string },
+  ): Promise<void> {
+    const user = await this.prisma.client.user.findUnique({ where: { id: auth.userId } });
+    if (!user) {
+      throw new UnauthorizedException("User not found");
+    }
+    if (!verifyPassword(input.currentPassword, user.passwordHash)) {
+      throw new BadRequestException("Current password is incorrect");
+    }
+    await this.prisma.client.user.update({
+      where: { id: user.id },
+      data: { passwordHash: hashPassword(input.newPassword), mustChangePassword: false },
+    });
+    await this.prisma.client.userSession.updateMany({
+      where: { userId: user.id, id: { not: auth.sessionId }, revokedAt: null },
+      data: { revokedAt: new Date() },
+    });
+    await this.audit.record({
+      action: "AUTH.PASSWORD_CHANGED",
+      targetType: "User",
+      targetId: user.id,
+      actorUserId: user.id,
+      sourceIp: meta.sourceIp,
+      requestId: meta.requestId,
+    });
+  }
+
+  private async loadUserWithAssignments(userId: string): Promise<AuthUserSummary> {
+    const user = await this.prisma.client.user.findUnique({
+      where: { id: userId },
+      include: { assignments: { include: { role: true } } },
+    });
+    if (!user) {
+      throw new UnauthorizedException("User not found");
+    }
+    return toSummary(user);
+  }
+}
+
+function toSummary(user: {
+  id: string;
+  email: string;
+  displayName: string;
+  active: boolean;
+  mustChangePassword: boolean;
+  assignments: Array<{
+    id: string;
+    scopeType: "COUNTY" | "SUBCOUNTY" | "WARD";
+    countyId: string | null;
+    subcountyId: string | null;
+    wardId: string | null;
+    role: { code: string; name: string };
+  }>;
+}): AuthUserSummary {
+  return {
+    id: user.id,
+    email: user.email,
+    displayName: user.displayName,
+    active: user.active,
+    mustChangePassword: user.mustChangePassword,
+    assignments: user.assignments.map((assignment) => ({
+      id: assignment.id,
+      role: assignment.role.code as AuthAssignment["role"],
+      roleName: assignment.role.name,
+      scopeType: assignment.scopeType,
+      countyId: assignment.countyId,
+      subcountyId: assignment.subcountyId,
+      wardId: assignment.wardId,
+    })),
+  };
+}

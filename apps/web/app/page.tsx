@@ -1,3 +1,4 @@
+import Link from "next/link";
 import { BrandLogo } from "@/components/BrandLogo";
 
 export default function Home() {
@@ -11,7 +12,10 @@ export default function Home() {
           Multi-ward operations platform — Makina Ward · Kibra Subcounty ·
           Nairobi City County
         </p>
-        <p className="status-badge">Phase 1 · Foundation</p>
+        <p className="status-badge">Phase 2 · Organisation + Authentication</p>
+        <p className="auth-link">
+          <Link href="/login">Sign in</Link>
+        </p>
       </section>
     </main>
   );

@@ -1,14 +1,16 @@
 import "reflect-metadata";
 import { randomUUID } from "node:crypto";
+import { Logger } from "@nestjs/common";
 import { NestFactory } from "@nestjs/core";
 import {
   FastifyAdapter,
   NestFastifyApplication,
 } from "@nestjs/platform-fastify";
-import { Logger } from "@nestjs/common";
+import fastifyCookie from "@fastify/cookie";
+import fastifyCors from "@fastify/cors";
 import { AppModule } from "./app.module";
 import { AllExceptionsFilter } from "./common/http-exception.filter";
-import { loadConfig } from "./config/config";
+import { AppConfig, loadConfig } from "./config/config";
 
 const REQUEST_ID_HEADER = "x-request-id";
 
@@ -38,9 +40,38 @@ function registerRequestIdAndHeaders(app: NestFastifyApplication) {
   });
 }
 
-async function bootstrap() {
-  const config = loadConfig();
+export interface CreateAppOptions {
+  config?: AppConfig;
+}
 
+/** Applies global plugins, prefix, filters and hooks to a Nest Fastify app. */
+export async function configureApp(
+  app: NestFastifyApplication,
+  config: AppConfig,
+): Promise<NestFastifyApplication> {
+  await app.register(fastifyCookie as never);
+  await app.register(fastifyCors as never, {
+    origin:
+      config.env === "production"
+        ? [config.publicBaseUrl, config.publicBaseUrl.replace(/\/$/, "")]
+        : true,
+    credentials: true,
+    methods: ["GET", "POST", "PUT", "PATCH", "DELETE", "OPTIONS"],
+  });
+  app.setGlobalPrefix("api/v1", {
+    exclude: ["health/live", "health/ready", "health"],
+  });
+  app.useGlobalFilters(new AllExceptionsFilter());
+  app.enableShutdownHooks();
+  registerRequestIdAndHeaders(app);
+  return app;
+}
+
+/** Creates and configures the Nest Fastify application without listening. */
+export async function createApp(
+  options: CreateAppOptions = {},
+): Promise<NestFastifyApplication> {
+  const config = options.config ?? loadConfig();
   const app = await NestFactory.create<NestFastifyApplication>(
     AppModule,
     new FastifyAdapter({
@@ -54,14 +85,12 @@ async function bootstrap() {
           : ["error", "warn", "log"],
     },
   );
+  return configureApp(app, config);
+}
 
-  app.setGlobalPrefix("api/v1", {
-    exclude: ["health/live", "health/ready", "health"],
-  });
-  app.useGlobalFilters(new AllExceptionsFilter());
-  app.enableShutdownHooks();
-  registerRequestIdAndHeaders(app);
-
+async function bootstrap() {
+  const config = loadConfig();
+  const app = await createApp({ config });
   await app.listen({ port: config.port, host: "0.0.0.0" });
   Logger.log(
     `ward-ops API listening on :${config.port} (env=${config.env})`,
@@ -69,4 +98,6 @@ async function bootstrap() {
   );
 }
 
-void bootstrap();
+if (require.main === module) {
+  void bootstrap();
+}
