@@ -2,6 +2,13 @@ import { describe, expect, it } from "vitest";
 import { employeeNumberSchema, kenyanPhoneSchema } from "../src/common";
 import { createWorkLogSchema } from "../src/work-log";
 import { createAbsenceSchema } from "../src/absence";
+import { createEmployeeSchema, createEmployeeAssignmentSchema } from "../src/staff";
+import {
+  createAttendanceSessionSchema,
+  checkInSchema,
+  manualAttendanceSchema,
+  rosterQuerySchema,
+} from "../src/attendance";
 
 describe("employeeNumberSchema", () => {
   it("accepts an 11-digit year-prefixed ID", () => {
@@ -95,5 +102,123 @@ describe("createAbsenceSchema", () => {
     expect(() =>
       createAbsenceSchema.parse({ ...base, kind: "SICK_OFF", reason: "sick" }),
     ).toThrow();
+  });
+});
+
+describe("createEmployeeSchema", () => {
+  const base = {
+    employeeNumber: "20230464669",
+    fullName: "John Makina",
+    phone: "0712345601",
+    wardId: "clh00000000000000000000000",
+  };
+
+  it("accepts a valid employee", () => {
+    const parsed = createEmployeeSchema.parse(base);
+    expect(parsed.designation).toBe("Green Army Staff");
+    expect(parsed.rosterStatus).toBe("ON_DUTY");
+  });
+
+  it("rejects an invalid employee number", () => {
+    expect(() =>
+      createEmployeeSchema.parse({ ...base, employeeNumber: "NCC-1042" }),
+    ).toThrow();
+  });
+
+  it("rejects a non-Kenyan phone", () => {
+    expect(() =>
+      createEmployeeSchema.parse({ ...base, phone: "12345" }),
+    ).toThrow();
+  });
+});
+
+describe("createEmployeeAssignmentSchema", () => {
+  it("requires a ward id", () => {
+    expect(() => createEmployeeAssignmentSchema.parse({ wardId: "nope" })).toThrow();
+    expect(createEmployeeAssignmentSchema.parse({ wardId: "clh00000000000000000000000" }).wardId).toBe(
+      "clh00000000000000000000000",
+    );
+  });
+});
+
+describe("createAttendanceSessionSchema", () => {
+  const base = {
+    wardId: "clh00000000000000000000000",
+    activity: "Drainage",
+    location: "Makina Market",
+    durationMinutes: 120,
+  };
+
+  it("accepts a valid session", () => {
+    expect(createAttendanceSessionSchema.parse(base).workDate).toBeUndefined();
+  });
+
+  it("rejects an unsupported duration", () => {
+    expect(() =>
+      createAttendanceSessionSchema.parse({ ...base, durationMinutes: 90 }),
+    ).toThrow();
+  });
+});
+
+describe("checkInSchema", () => {
+  it("accepts a valid check-in", () => {
+    const parsed = checkInSchema.parse({
+      sessionToken: "0123456789abcdef0123456789abcdef",
+      employeeNumber: "20230464669",
+      latitude: -1.3,
+      longitude: 36.8,
+    });
+    expect(parsed.employeeNumber).toBe("20230464669");
+  });
+
+  it("rejects an invalid employee number", () => {
+    expect(() =>
+      checkInSchema.parse({
+        sessionToken: "0123456789abcdef0123456789abcdef",
+        employeeNumber: "123",
+      }),
+    ).toThrow();
+  });
+
+  it("rejects out-of-range coordinates", () => {
+    expect(() =>
+      checkInSchema.parse({
+        sessionToken: "0123456789abcdef0123456789abcdef",
+        employeeNumber: "20230464669",
+        latitude: 200,
+      }),
+    ).toThrow();
+  });
+});
+
+describe("manualAttendanceSchema", () => {
+  const base = {
+    employeeId: "clh00000000000000000000001",
+    status: "PRESENT",
+    reason: "Supervisor verified attendance",
+    workDate: "2026-08-15",
+  };
+
+  it("accepts a valid manual record", () => {
+    expect(manualAttendanceSchema.parse(base).status).toBe("PRESENT");
+  });
+
+  it("rejects a status outside the manual set", () => {
+    expect(() =>
+      manualAttendanceSchema.parse({ ...base, status: "LATE" }),
+    ).toThrow();
+  });
+
+  it("requires a reason of at least 5 characters", () => {
+    expect(() => manualAttendanceSchema.parse({ ...base, reason: "nope" })).toThrow();
+  });
+});
+
+describe("rosterQuerySchema", () => {
+  it("requires a ward and accepts an optional date", () => {
+    expect(() => rosterQuerySchema.parse({ workDate: "2026-08-15" })).toThrow();
+    expect(
+      rosterQuerySchema.parse({ wardId: "clh00000000000000000000000" }).workDate,
+    ).toBeUndefined();
   });
 });

@@ -151,3 +151,30 @@ export async function createUserWithAssignment(
   });
   return user.id;
 }
+
+export async function createEmployee(
+  prisma: PrismaClient,
+  input: {
+    employeeNumber: string;
+    fullName: string;
+    phone: string;
+    wardId: string;
+    active?: boolean;
+    rosterStatus?: "ON_DUTY" | "ANNUAL_LEAVE";
+  },
+): Promise<string> {
+  const employee = await prisma.employee.create({
+    data: {
+      employeeNumber: input.employeeNumber,
+      fullName: input.fullName,
+      phone: input.phone,
+      designation: "Green Army Staff",
+      active: input.active ?? true,
+      wardId: input.wardId,
+      profile: {
+        create: { residence: null, rosterStatus: input.rosterStatus ?? "ON_DUTY" },
+      },
+    },
+  });
+  return employee.id;
+}
