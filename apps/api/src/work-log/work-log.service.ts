@@ -1,0 +1,246 @@
+import {
+  BadRequestException,
+  ConflictException,
+  ForbiddenException,
+  Injectable,
+  NotFoundException,
+} from "@nestjs/common";
+import { Prisma } from "@ward-ops/database";
+import type { WorkLogStatus } from "@ward-ops/contracts";
+import { PrismaService } from "../prisma/prisma.service";
+import { AuditService } from "../audit/audit.service";
+import { AuthContext } from "../auth/auth-context";
+import { ScopeService } from "../authorization/scope.service";
+import type { CreateWorkLogInput, WorkLogActionInput, WorkLogQueryInput } from "@ward-ops/validation";
+import { nextWorkLogStatus } from "./work-log-transitions";
+
+export interface RequestMeta {
+  sourceIp?: string;
+  requestId?: string;
+}
+
+function toDateOnly(value: Date): string {
+  return value.toISOString().slice(0, 10);
+}
+
+const ACTION_AUDIT: Record<string, string> = {
+  APPROVE: "WORK_LOG.APPROVED",
+  REJECT: "WORK_LOG.REJECTED",
+};
+
+const ACTION_CAPABILITY: Record<string, "WORK_REVIEW"> = {
+  APPROVE: "WORK_REVIEW",
+  REJECT: "WORK_REVIEW",
+};
+
+type WorkLogWithRelations = Prisma.WorkLogGetPayload<{
+  include: {
+    detail: true;
+    operations: true;
+  };
+}>;
+
+@Injectable()
+export class WorkLogService {
+  constructor(
+    private readonly prisma: PrismaService,
+    private readonly scope: ScopeService,
+    private readonly audit: AuditService,
+  ) {}
+
+  // -- Helpers ----------------------------------------------------------------
+
+  private async wardAccessibleOrThrow(auth: AuthContext, wardId: string): Promise<void> {
+    if (!(await this.scope.wardAccessible(auth, wardId))) {
+      throw new ForbiddenException("Ward is outside your scope");
+    }
+  }
+
+  private async accessibleWardIds(auth: AuthContext): Promise<string[]> {
+    return (await this.scope.accessibleWards(auth)).map((ward) => ward.id);
+  }
+
+  private async findOrThrow(id: string): Promise<WorkLogWithRelations> {
+    const workLog = await this.prisma.client.workLog.findUnique({
+      where: { id },
+      include: { detail: true, operations: true },
+    });
+    if (!workLog) {
+      throw new NotFoundException("Work log not found");
+    }
+    return workLog;
+  }
+
+  private toSummary(workLog: WorkLogWithRelations): Record<string, unknown> {
+    return {
+      id: workLog.id,
+      wardId: workLog.wardId,
+      workDate: toDateOnly(workLog.workDate),
+      activity: workLog.activity,
+      location: workLog.location,
+      description: workLog.description,
+      staffCount: workLog.staffCount,
+      challenges: workLog.challenges,
+      status: workLog.status,
+      version: workLog.version,
+      submittedBy: workLog.submittedBy,
+      reviewedBy: workLog.reviewedBy,
+      reviewNote: workLog.reviewNote,
+      createdAt: workLog.createdAt,
+      reviewedAt: workLog.reviewedAt,
+      detail: {
+        completionStatus: workLog.detail?.completionStatus ?? "COMPLETE",
+        outstandingWork: workLog.detail?.outstandingWork ?? null,
+      },
+      operations: {
+        areasRoads: workLog.operations?.areasRoads ?? "",
+        numberOfTrips: workLog.operations?.numberOfTrips ?? 0,
+        wasteTransferInvolved: workLog.operations?.wasteTransferInvolved ?? false,
+        truckId: workLog.operations?.truckId ?? null,
+        backhoeId: workLog.operations?.backhoeId ?? null,
+        cleanupDone: workLog.operations?.cleanupDone ?? false,
+        cleanupStakeholders: workLog.operations?.cleanupStakeholders ?? null,
+        climateTeamCount: workLog.operations?.climateTeamCount ?? 0,
+      },
+    };
+  }
+
+  // -- Create ----------------------------------------------------------------
+
+  async create(
+    auth: AuthContext,
+    input: CreateWorkLogInput,
+    meta: RequestMeta,
+  ): Promise<Record<string, unknown>> {
+    await this.wardAccessibleOrThrow(auth, input.wardId);
+    const workDate = new Date(`${input.workDate}T00:00:00.000Z`);
+
+    const workLog = await this.prisma.client.workLog.create({
+      data: {
+        wardId: input.wardId,
+        workDate,
+        activity: input.activity,
+        location: input.location,
+        description: input.description,
+        staffCount: input.staffCount,
+        challenges: input.challenges?.trim() || null,
+        status: "SUBMITTED",
+        submittedBy: auth.userId,
+        detail: {
+          create: {
+            completionStatus: input.completionStatus,
+            outstandingWork: input.outstandingWork.trim() || null,
+          },
+        },
+        operations: {
+          create: {
+            areasRoads: input.areasRoads,
+            numberOfTrips: input.numberOfTrips,
+            wasteTransferInvolved: input.wasteTransferInvolved,
+            truckId: input.truckId.trim() || null,
+            backhoeId: input.backhoeId.trim() || null,
+            cleanupDone: input.cleanupDone,
+            cleanupStakeholders: input.cleanupStakeholders.trim() || null,
+            climateTeamCount: input.climateTeamCount,
+          },
+        },
+      },
+      include: { detail: true, operations: true },
+    });
+
+    await this.audit.record({
+      action: "WORK_LOG.SUBMITTED",
+      targetType: "WorkLog",
+      targetId: workLog.id,
+      scopeType: "WARD",
+      scopeId: workLog.wardId,
+      actorUserId: auth.userId,
+      sourceIp: meta.sourceIp,
+      requestId: meta.requestId,
+      details: `${input.activity} ${input.completionStatus}`,
+    });
+    return this.toSummary(workLog);
+  }
+
+  // -- Reads -----------------------------------------------------------------
+
+  async list(auth: AuthContext, query: WorkLogQueryInput): Promise<Array<Record<string, unknown>>> {
+    const wardIds = await this.accessibleWardIds(auth);
+    const where: Prisma.WorkLogWhereInput = { wardId: { in: wardIds } };
+    if (query.wardId) {
+      if (!wardIds.includes(query.wardId)) return [];
+      where.wardId = query.wardId;
+    }
+    if (query.status) where.status = query.status;
+    if (query.workDate) where.workDate = new Date(`${query.workDate}T00:00:00.000Z`);
+
+    const workLogs = await this.prisma.client.workLog.findMany({
+      where,
+      include: { detail: true, operations: true },
+      orderBy: [{ workDate: "desc" }, { createdAt: "desc" }],
+    });
+    return workLogs.map((workLog) => this.toSummary(workLog));
+  }
+
+  async get(auth: AuthContext, id: string): Promise<Record<string, unknown>> {
+    const workLog = await this.findOrThrow(id);
+    if (!(await this.scope.wardAccessible(auth, workLog.wardId))) {
+      throw new NotFoundException("Work log not found");
+    }
+    return this.toSummary(workLog);
+  }
+
+  // -- Transitions -----------------------------------------------------------
+
+  async action(
+    auth: AuthContext,
+    id: string,
+    input: WorkLogActionInput,
+    meta: RequestMeta,
+  ): Promise<Record<string, unknown>> {
+    const workLog = await this.findOrThrow(id);
+    if (!(await this.scope.wardAccessible(auth, workLog.wardId))) {
+      throw new NotFoundException("Work log not found");
+    }
+
+    const required = ACTION_CAPABILITY[input.action];
+    if (!required || !auth.capabilities.includes(required)) {
+      throw new ForbiddenException("You do not have permission for this action");
+    }
+
+    const next = nextWorkLogStatus(workLog.status, input.action);
+    if (!next) {
+      throw new ConflictException(
+        `A work log in ${workLog.status} cannot be ${input.action.toLowerCase()}d`,
+      );
+    }
+
+    if (input.action === "REJECT" && input.reviewNote.trim().length < 3) {
+      throw new BadRequestException("A rejection note is required");
+    }
+
+    const updated = await this.prisma.client.workLog.update({
+      where: { id },
+      data: {
+        status: next as WorkLogStatus,
+        version: { increment: 1 },
+        reviewedBy: auth.userId,
+        reviewedAt: new Date(),
+        reviewNote: input.reviewNote.trim() || null,
+      },
+      include: { detail: true, operations: true },
+    });
+    await this.audit.record({
+      action: ACTION_AUDIT[input.action],
+      targetType: "WorkLog",
+      targetId: id,
+      scopeType: "WARD",
+      scopeId: updated.wardId,
+      actorUserId: auth.userId,
+      sourceIp: meta.sourceIp,
+      requestId: meta.requestId,
+      details: `${workLog.status} -> ${next}`,
+    });
+    return this.toSummary(updated);
+  }
+}

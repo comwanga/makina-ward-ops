@@ -321,6 +321,21 @@ body {
   color: #6a4c93;
 }
 
+.badge.submitted {
+  background: #fdeee2;
+  color: var(--amber);
+}
+
+.badge.approved {
+  background: #e1f1e7;
+  color: var(--green);
+}
+
+.badge.rejected {
+  background: #fbe4e4;
+  color: #b3453f;
+}
+
 .link-btn {
   background: none;
   border: none;

@@ -72,6 +72,9 @@ export type AbsenceAction = (typeof ABSENCE_ACTIONS)[number];
 export const WORK_LOG_STATUSES = ["SUBMITTED", "APPROVED", "REJECTED"] as const;
 export type WorkLogStatus = (typeof WORK_LOG_STATUSES)[number];
 
+export const WORK_LOG_ACTIONS = ["APPROVE", "REJECT"] as const;
+export type WorkLogAction = (typeof WORK_LOG_ACTIONS)[number];
+
 export const COMPLETION_STATUSES = ["COMPLETE", "INCOMPLETE"] as const;
 export type CompletionStatus = (typeof COMPLETION_STATUSES)[number];
 

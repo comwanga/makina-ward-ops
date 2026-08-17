@@ -1,4 +1,5 @@
 import { z } from "zod";
+import { idSchema } from "./common";
 
 export const createWorkLogSchema = z
   .object({
@@ -42,5 +43,12 @@ export const workLogActionSchema = z.object({
   reviewNote: z.string().trim().max(2000).default(""),
 });
 
+export const workLogQuerySchema = z.object({
+  wardId: idSchema.optional(),
+  workDate: z.string().regex(/^\d{4}-\d{2}-\d{2}$/).optional(),
+  status: z.enum(["SUBMITTED", "APPROVED", "REJECTED"]).optional(),
+});
+
 export type CreateWorkLogInput = z.infer<typeof createWorkLogSchema>;
 export type WorkLogActionInput = z.infer<typeof workLogActionSchema>;
+export type WorkLogQueryInput = z.infer<typeof workLogQuerySchema>;
