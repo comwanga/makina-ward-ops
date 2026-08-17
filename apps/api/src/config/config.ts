@@ -28,6 +28,7 @@ const envSchema = z
     AI_API_KEY: z.string().optional(),
     AI_MODEL: z.string().default("llama-3.1-8b-instant"),
     MAX_UPLOAD_BYTES: z.coerce.number().int().positive().default(5 * 1024 * 1024),
+    DOCUMENT_STORE_DIR: z.string().default("data/documents"),
   })
   .superRefine((env, ctx) => {
     if (env.APP_ENV === "production") {
@@ -71,6 +72,7 @@ export interface AppConfig {
   };
   ai: { enabled: boolean; baseUrl: string; apiKey?: string; model: string };
   maxUploadBytes: number;
+  documentStoreDir: string;
 }
 
 export function loadConfig(env: NodeJS.ProcessEnv = process.env): AppConfig {
@@ -118,5 +120,6 @@ export function loadConfig(env: NodeJS.ProcessEnv = process.env): AppConfig {
       model: parsed.AI_MODEL,
     },
     maxUploadBytes: parsed.MAX_UPLOAD_BYTES,
+    documentStoreDir: parsed.DOCUMENT_STORE_DIR,
   };
 }

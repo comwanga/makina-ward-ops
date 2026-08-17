@@ -12,12 +12,13 @@ export default function Home() {
           Multi-ward operations platform — Makina Ward · Kibra Subcounty ·
           Nairobi City County
         </p>
-        <p className="status-badge">Phase 3 · Staff + Attendance</p>
+        <p className="status-badge">Phase 4 · Absence Management</p>
         <p className="auth-link">
           <Link href="/login">Sign in</Link>
         </p>
         <p className="auth-link">
-          <Link href="/staff">Staff register</Link> · <Link href="/attendance">Attendance</Link>
+          <Link href="/staff">Staff register</Link> · <Link href="/attendance">Attendance</Link> ·{" "}
+          <Link href="/absences">Absences</Link>
         </p>
       </section>
     </main>
