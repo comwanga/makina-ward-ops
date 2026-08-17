@@ -336,6 +336,40 @@ body {
   color: #b3453f;
 }
 
+.badge.finalized {
+  background: #e1f1e7;
+  color: var(--green);
+}
+
+.metrics {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 12px;
+  margin: 14px 0;
+}
+
+.metric {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 2px;
+  padding: 10px 16px;
+  border: 1px solid var(--line);
+  border-radius: 10px;
+  min-width: 74px;
+}
+
+.metric-value {
+  font-size: 20px;
+  font-weight: 700;
+}
+
+.metric-label {
+  font-size: 11px;
+  color: var(--muted);
+  text-transform: lowercase;
+}
+
 .link-btn {
   background: none;
   border: none;

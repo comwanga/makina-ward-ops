@@ -549,3 +549,194 @@ export async function downloadEvidence(evidenceId: string): Promise<Blob> {
   }
   return response.blob();
 }
+
+// -- Phase 7: reports ---------------------------------------------------------
+
+export type ReportKind = "DAILY" | "WEEKLY" | "MONTHLY" | "CUSTOM";
+export type ReportStatus = "DRAFT" | "FINALIZED";
+export type ReportScopeType = "COUNTY" | "SUBCOUNTY" | "WARD";
+
+export interface OrganisationWard {
+  id: string;
+  code: string;
+  name: string;
+  subcountyId: string;
+}
+
+export interface OrganisationSubcounty {
+  id: string;
+  code: string;
+  name: string;
+  wards: OrganisationWard[];
+}
+
+export interface OrganisationCounty {
+  id: string;
+  code: string;
+  name: string;
+  subcounties: OrganisationSubcounty[];
+}
+
+export interface ReportPhotoRef {
+  evidenceId: string;
+  objectKey: string;
+  sha256: string;
+  caption: string | null;
+  stage: string;
+}
+
+export interface ReportRosterRow {
+  employeeNumber: string;
+  fullName: string;
+  role: string | null;
+  status: string;
+  detail: string;
+}
+
+export interface ReportDayWard {
+  wardId: string;
+  wardName: string;
+  activity: string;
+  location: string;
+  roster: ReportRosterRow[];
+}
+
+export interface ReportDay {
+  date: string;
+  wards: ReportDayWard[];
+}
+
+export interface ReportWorkLog {
+  id: string;
+  wardId: string;
+  wardName: string;
+  date: string;
+  activity: string;
+  location: string;
+  areasRoads: string;
+  description: string;
+  numberOfTrips: number;
+  wasteTransferInvolved: boolean;
+  truckId: string | null;
+  backhoeId: string | null;
+  cleanupDone: boolean;
+  cleanupStakeholders: string | null;
+  climateTeamCount: number;
+  staffCount: number;
+  challenges: string | null;
+  completionStatus: string;
+  outstandingWork: string | null;
+  photos: ReportPhotoRef[];
+}
+
+export interface ReportSnapshot {
+  scopeType: ReportScopeType;
+  scopeId: string;
+  scopeName: string;
+  startDate: string;
+  endDate: string;
+  kind: ReportKind;
+  generatedAt: string;
+  signedBy: string | null;
+  signedTitle: string | null;
+  totals: Record<string, number>;
+  days: ReportDay[];
+  workLogs: ReportWorkLog[];
+}
+
+export interface ReportEvidenceRef {
+  id: string;
+  evidenceId: string | null;
+  objectKey: string;
+  sha256: string;
+  caption: string | null;
+  stage: string;
+}
+
+export interface Report {
+  id: string;
+  kind: ReportKind;
+  scopeType: ReportScopeType;
+  scopeId: string;
+  periodStart: string;
+  periodEnd: string;
+  status: ReportStatus;
+  title: string;
+  narrative: string;
+  recommendations: string;
+  snapshot: ReportSnapshot;
+  version: number;
+  finalizedBy: string | null;
+  finalizedAt: string | null;
+  createdBy: string;
+  createdAt: string;
+  evidence: ReportEvidenceRef[];
+}
+
+export interface ReportPreview {
+  snapshot: ReportSnapshot;
+  narrative: string;
+  recommendations: string;
+  title: string;
+}
+
+export interface ReportPeriodInput {
+  scopeType: ReportScopeType;
+  scopeId: string;
+  startDate: string;
+  endDate: string;
+  kind: ReportKind;
+}
+
+export async function fetchOrganisationTree(): Promise<OrganisationCounty[]> {
+  const result = await apiFetch<{ counties: OrganisationCounty[] }>("/organisations");
+  return result.counties;
+}
+
+export async function previewReport(input: ReportPeriodInput): Promise<ReportPreview> {
+  const params = new URLSearchParams();
+  params.set("scopeType", input.scopeType);
+  params.set("scopeId", input.scopeId);
+  params.set("startDate", input.startDate);
+  params.set("endDate", input.endDate);
+  params.set("kind", input.kind);
+  return apiFetch<ReportPreview>(`/reports/preview?${params.toString()}`);
+}
+
+export async function finalizeReport(
+  input: ReportPeriodInput & { narrative?: string; recommendations?: string },
+): Promise<Report> {
+  return apiFetch<Report>("/reports", { method: "POST", body: input });
+}
+
+export async function listReports(query?: {
+  scopeType?: ReportScopeType;
+  scopeId?: string;
+  kind?: ReportKind;
+}): Promise<Report[]> {
+  const params = new URLSearchParams();
+  if (query?.scopeType) params.set("scopeType", query.scopeType);
+  if (query?.scopeId) params.set("scopeId", query.scopeId);
+  if (query?.kind) params.set("kind", query.kind);
+  const suffix = params.toString() ? `?${params.toString()}` : "";
+  return apiFetch<Report[]>(`/reports${suffix}`);
+}
+
+export async function fetchReport(id: string): Promise<Report> {
+  return apiFetch<Report>(`/reports/${encodeURIComponent(id)}`);
+}
+
+export async function downloadReportCsv(id: string): Promise<Blob> {
+  const response = await fetch(`${API_URL}/reports/${encodeURIComponent(id)}/csv`, {
+    credentials: "include",
+  });
+  if (!response.ok) {
+    const body = await response.json().catch(() => null);
+    throw new ApiError(
+      response.status,
+      body?.error?.code ?? "REQUEST_FAILED",
+      body?.error?.message ?? "Request failed",
+    );
+  }
+  return response.blob();
+}
