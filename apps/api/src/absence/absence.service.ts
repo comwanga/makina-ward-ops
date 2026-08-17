@@ -5,6 +5,7 @@ import {
   Injectable,
   NotFoundException,
 } from "@nestjs/common";
+import { createHash } from "node:crypto";
 import { Prisma } from "@ward-ops/database";
 import type { AbsenceStatus } from "@ward-ops/contracts";
 import { PrismaService } from "../prisma/prisma.service";
@@ -406,6 +407,13 @@ export class AbsenceService {
     }
 
     const buffer = await this.storage.read(document.objectKey);
+    // Read-integrity, aligned with the evidence verification pattern (§24):
+    // recompute the sha256 so a missing or corrupted stored object surfaces as
+    // an error instead of silently serving broken content.
+    const actual = createHash("sha256").update(buffer).digest("hex");
+    if (actual !== document.sha256) {
+      throw new NotFoundException("Document object is missing or corrupted");
+    }
     await this.audit.record({
       action: "ABSENCE.DOCUMENT_DOWNLOADED",
       targetType: "Document",
