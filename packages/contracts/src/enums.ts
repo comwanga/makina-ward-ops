@@ -66,6 +66,9 @@ export const ABSENCE_STATUSES = [
 ] as const;
 export type AbsenceStatus = (typeof ABSENCE_STATUSES)[number];
 
+export const ABSENCE_ACTIONS = ["SUBMIT", "APPROVE", "REJECT", "CANCEL"] as const;
+export type AbsenceAction = (typeof ABSENCE_ACTIONS)[number];
+
 export const WORK_LOG_STATUSES = ["SUBMITTED", "APPROVED", "REJECTED"] as const;
 export type WorkLogStatus = (typeof WORK_LOG_STATUSES)[number];
 

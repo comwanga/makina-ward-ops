@@ -8,6 +8,7 @@ import {
 } from "@nestjs/platform-fastify";
 import fastifyCookie from "@fastify/cookie";
 import fastifyCors from "@fastify/cors";
+import fastifyMultipart from "@fastify/multipart";
 import { AppModule } from "./app.module";
 import { AllExceptionsFilter } from "./common/http-exception.filter";
 import { AppConfig, loadConfig } from "./config/config";
@@ -57,6 +58,9 @@ export async function configureApp(
         : true,
     credentials: true,
     methods: ["GET", "POST", "PUT", "PATCH", "DELETE", "OPTIONS"],
+  });
+  await app.register(fastifyMultipart as never, {
+    limits: { fileSize: config.maxUploadBytes },
   });
   app.setGlobalPrefix("api/v1", {
     exclude: ["health/live", "health/ready", "health"],

@@ -1,4 +1,5 @@
 import { z } from "zod";
+import { idSchema } from "./common";
 
 export const absenceKinds = [
   "ANNUAL_LEAVE",
@@ -41,5 +42,24 @@ export const absenceActionSchema = z.object({
   reviewNote: z.string().trim().max(2000).default(""),
 });
 
+export const absenceQuerySchema = z.object({
+  wardId: idSchema.optional(),
+  status: z
+    .enum(["PLANNED", "SUBMITTED", "APPROVED", "REJECTED", "CANCELLED"])
+    .optional(),
+  employeeId: idSchema.optional(),
+});
+
+export const documentCategorySchema = z.enum([
+  "SICK_SHEET",
+  "MEDICAL_CERTIFICATE",
+  "LEAVE_FORM",
+  "LEAVE_APPROVAL",
+  "RETURN_TO_WORK",
+  "OTHER",
+]);
+
 export type CreateAbsenceInput = z.infer<typeof createAbsenceSchema>;
 export type AbsenceActionInput = z.infer<typeof absenceActionSchema>;
+export type AbsenceQueryInput = z.infer<typeof absenceQuerySchema>;
+export type DocumentCategory = z.infer<typeof documentCategorySchema>;

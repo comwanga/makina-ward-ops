@@ -48,6 +48,10 @@ describe("attendance (integration)", () => {
 
   beforeEach(async () => {
     await resetAuthData(prisma);
+    await prisma.reminderDelivery.deleteMany();
+    await prisma.documentClassification.deleteMany();
+    await prisma.document.deleteMany();
+    await prisma.absenceRequest.deleteMany();
     await prisma.attendance.deleteMany();
     await prisma.attendanceSession.deleteMany();
     await prisma.employeeProfile.deleteMany();

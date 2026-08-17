@@ -40,6 +40,10 @@ describe("staff management (integration)", () => {
 
   beforeEach(async () => {
     await resetAuthData(prisma);
+    await prisma.reminderDelivery.deleteMany();
+    await prisma.documentClassification.deleteMany();
+    await prisma.document.deleteMany();
+    await prisma.absenceRequest.deleteMany();
     await prisma.employeeProfile.deleteMany();
     await prisma.employee.deleteMany();
     const officerUserId = await createUserWithAssignment(prisma, {

@@ -9,6 +9,10 @@ data/uploads/*
 !data/uploads/.gitkeep
 data/documents/*
 !data/documents/.gitkeep
+apps/api/data/*
+!apps/api/data/.gitkeep
+apps/api/data/documents/*
+!apps/api/data/documents/.gitkeep
 
 # Node / monorepo
 node_modules/

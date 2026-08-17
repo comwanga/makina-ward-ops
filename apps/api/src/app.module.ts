@@ -8,6 +8,7 @@ import { AuthorizationModule } from "./authorization/authorization.module";
 import { UsersModule } from "./users/users.module";
 import { StaffModule } from "./staff/staff.module";
 import { AttendanceModule } from "./attendance/attendance.module";
+import { AbsenceModule } from "./absence/absence.module";
 
 @Module({
   imports: [
@@ -20,6 +21,7 @@ import { AttendanceModule } from "./attendance/attendance.module";
     UsersModule,
     StaffModule,
     AttendanceModule,
+    AbsenceModule,
   ],
 })
 export class AppModule {}

@@ -270,3 +270,131 @@ export async function checkInPublic(
     body: { employeeNumber, latitude, longitude },
   });
 }
+
+// -- Phase 4: absence management ---------------------------------------------
+
+export type AbsenceKind =
+  | "ANNUAL_LEAVE"
+  | "MATERNITY_LEAVE"
+  | "PATERNITY_LEAVE"
+  | "COMPASSIONATE_LEAVE"
+  | "SICK_OFF"
+  | "OFFICIAL_DUTY"
+  | "UNPAID_LEAVE";
+
+export type AbsenceStatus =
+  | "PLANNED"
+  | "SUBMITTED"
+  | "APPROVED"
+  | "REJECTED"
+  | "CANCELLED";
+
+export type AbsenceAction = "SUBMIT" | "APPROVE" | "REJECT" | "CANCEL";
+
+export interface AbsenceDocument {
+  id: string;
+  originalName: string;
+  contentType: string;
+  size: number;
+  sensitivity: string;
+  category: string;
+}
+
+export interface Absence {
+  id: string;
+  employee: { id: string; employeeNumber: string; fullName: string };
+  wardId: string;
+  kind: AbsenceKind;
+  startDate: string;
+  endDate: string;
+  returnDate: string;
+  reason: string;
+  status: AbsenceStatus;
+  version: number;
+  submittedBy: string;
+  reviewedBy: string | null;
+  reviewNote: string | null;
+  createdAt: string;
+  reviewedAt: string | null;
+  documents: AbsenceDocument[];
+}
+
+export interface CreateAbsenceInput {
+  employeeId: string;
+  kind: AbsenceKind;
+  startDate: string;
+  endDate: string;
+  returnDate: string;
+  reason: string;
+  planned?: boolean;
+}
+
+export async function listAbsences(query?: {
+  wardId?: string;
+  status?: AbsenceStatus;
+  employeeId?: string;
+}): Promise<Absence[]> {
+  const params = new URLSearchParams();
+  if (query?.wardId) params.set("wardId", query.wardId);
+  if (query?.status) params.set("status", query.status);
+  if (query?.employeeId) params.set("employeeId", query.employeeId);
+  const suffix = params.toString() ? `?${params.toString()}` : "";
+  return apiFetch<Absence[]>(`/absence-requests${suffix}`);
+}
+
+export async function createAbsence(input: CreateAbsenceInput): Promise<Absence> {
+  return apiFetch<Absence>("/absence-requests", { method: "POST", body: input });
+}
+
+export async function absenceAction(
+  id: string,
+  input: { action: AbsenceAction; reviewNote?: string },
+): Promise<Absence> {
+  return apiFetch<Absence>(`/absence-requests/${id}/actions`, {
+    method: "POST",
+    body: input,
+  });
+}
+
+export async function uploadAbsenceDocument(
+  id: string,
+  file: File,
+  category: string,
+): Promise<AbsenceDocument> {
+  const form = new FormData();
+  form.append("file", file);
+  form.append("documentCategory", category);
+  const headers: Record<string, string> = {};
+  if (csrfToken) headers["x-csrf-token"] = csrfToken;
+  const response = await fetch(`${API_URL}/absence-requests/${id}/documents`, {
+    method: "POST",
+    headers,
+    credentials: "include",
+    body: form,
+  });
+  const text = await response.text();
+  const body = text ? JSON.parse(text) : null;
+  if (!response.ok) {
+    throw new ApiError(
+      response.status,
+      body?.error?.code ?? "REQUEST_FAILED",
+      body?.error?.message ?? "Request failed",
+    );
+  }
+  return body as AbsenceDocument;
+}
+
+export async function downloadAbsenceDocument(documentId: string): Promise<Blob> {
+  const response = await fetch(`${API_URL}/absence-requests/documents/${documentId}/download`, {
+    credentials: "include",
+  });
+  if (!response.ok) {
+    const body = await response.json().catch(() => null);
+    throw new ApiError(
+      response.status,
+      body?.error?.code ?? "REQUEST_FAILED",
+      body?.error?.message ?? "Request failed",
+    );
+  }
+  return response.blob();
+}

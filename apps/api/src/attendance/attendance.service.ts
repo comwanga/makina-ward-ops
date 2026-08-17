@@ -430,14 +430,37 @@ export class AttendanceService {
     });
     const recordByEmployee = new Map(records.map((record) => [record.employeeId, record]));
 
+    // Approved absences reconcile the roster so an employee on approved leave
+    // or sick-off is never reported absent (legacy precedence).
+    const approvedAbsences = await this.prisma.client.absenceRequest.findMany({
+      where: {
+        wardId: query.wardId,
+        status: "APPROVED",
+        startDate: { lte: workDateDate },
+        endDate: { gte: workDateDate },
+      },
+    });
+    const absenceByEmployee = new Map(
+      approvedAbsences.map((absence) => [absence.employeeId, absence]),
+    );
+
     return employees.map((employee) => {
       const record = recordByEmployee.get(employee.id);
+      const absence = absenceByEmployee.get(employee.id);
       let status: AttendanceStatus;
       let detail: string;
       let manualEditable = false;
       if (record && (record.status === "PRESENT" || record.status === "LATE")) {
         status = record.status;
         detail = record.checkedAt.toISOString().slice(11, 16);
+      } else if (absence) {
+        status =
+          absence.kind === "SICK_OFF"
+            ? "SICK_OFF"
+            : absence.kind === "OFFICIAL_DUTY"
+              ? "OFFICIAL_DUTY"
+              : "LEAVE";
+        detail = `Approved ${absence.kind.replace(/_/g, " ").toLowerCase()} · returns ${formatReturnDate(absence.returnDate)}`;
       } else if (record) {
         status = record.status;
         detail = "Manual status";
@@ -461,4 +484,12 @@ export class AttendanceService {
       };
     });
   }
+}
+
+function formatReturnDate(value: Date): string {
+  return new Intl.DateTimeFormat("en-GB", {
+    timeZone: "UTC",
+    day: "2-digit",
+    month: "short",
+  }).format(value);
 }

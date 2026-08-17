@@ -29,5 +29,6 @@ export function testConfig(databaseUrl: string): AppConfig {
       model: "llama-3.1-8b-instant",
     },
     maxUploadBytes: 5 * 1024 * 1024,
+    documentStoreDir: "data/documents",
   };
 }
