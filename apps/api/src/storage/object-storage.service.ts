@@ -1,10 +1,11 @@
 import { Inject, Injectable, Logger, NotFoundException } from "@nestjs/common";
 import { createHash, randomBytes } from "node:crypto";
-import { mkdir, readFile, unlink, writeFile } from "node:fs/promises";
+import { mkdir, readFile, readdir, unlink, writeFile } from "node:fs/promises";
 import path from "node:path";
 import {
   DeleteObjectCommand,
   GetObjectCommand,
+  ListObjectsV2Command,
   PutObjectCommand,
   S3Client,
 } from "@aws-sdk/client-s3";
@@ -34,6 +35,11 @@ export abstract class ObjectStorage {
   abstract save(input: StorageFileInput): Promise<StoredObject>;
   abstract read(objectKey: string): Promise<Buffer>;
   abstract delete(objectKey: string): Promise<void>;
+  /**
+   * Lists all stored object keys. Used by migration reconciliation tooling to
+   * detect objects that have no database metadata.
+   */
+  abstract list(): Promise<string[]>;
 }
 
 const LOCAL_KEY_PATTERN = /^[0-9a-f]{48}$/;
@@ -86,6 +92,15 @@ export class LocalObjectStorage extends ObjectStorage {
       await unlink(path.join(this.root, objectKey));
     } catch (error) {
       this.logger.warn(`Compensating delete failed for ${objectKey}: ${String(error)}`);
+    }
+  }
+
+  async list(): Promise<string[]> {
+    try {
+      const entries = await readdir(this.root);
+      return entries.filter((name) => LOCAL_KEY_PATTERN.test(name)).sort();
+    } catch {
+      return [];
     }
   }
 }
@@ -181,5 +196,26 @@ export class S3ObjectStorage extends ObjectStorage {
     } catch (error) {
       this.logger.warn(`Compensating delete failed for ${objectKey}: ${String(error)}`);
     }
+  }
+
+  async list(): Promise<string[]> {
+    const keys: string[] = [];
+    let continuationToken: string | undefined;
+    do {
+      const response = await this.client.send(
+        new ListObjectsV2Command({
+          Bucket: this.bucket,
+          Prefix: `${this.prefix}/`,
+          ContinuationToken: continuationToken,
+        }),
+      );
+      for (const item of response.Contents ?? []) {
+        if (item.Key && S3_KEY_PATTERN.test(item.Key.slice(this.prefix.length + 1))) {
+          keys.push(item.Key.slice(this.prefix.length + 1));
+        }
+      }
+      continuationToken = response.NextContinuationToken;
+    } while (continuationToken);
+    return keys.sort();
   }
 }
