@@ -414,3 +414,15 @@ body {
   padding: 2px 4px;
   max-width: 130px;
 }
+
+.doc-stage {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 4px 8px;
+  font-size: 12px;
+}
+
+.doc-stage strong {
+  text-transform: capitalize;
+}

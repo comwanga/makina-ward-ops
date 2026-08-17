@@ -485,3 +485,67 @@ export async function workLogAction(
     body: input,
   });
 }
+
+export type EvidenceStage = "BEFORE" | "DURING" | "AFTER";
+
+export interface Evidence {
+  id: string;
+  workLogId: string;
+  stage: EvidenceStage;
+  caption: string | null;
+  contentType: string;
+  size: number;
+  sha256: string;
+  uploadedBy: string;
+  createdAt: string;
+}
+
+export async function listEvidence(workLogId: string): Promise<Evidence[]> {
+  return apiFetch<Evidence[]>(`/evidence?workLogId=${encodeURIComponent(workLogId)}`);
+}
+
+export async function uploadEvidence(
+  workLogId: string,
+  file: File,
+  stage: EvidenceStage,
+  caption: string,
+): Promise<Evidence> {
+  const form = new FormData();
+  form.append("file", file);
+  form.append("workLogId", workLogId);
+  form.append("stage", stage);
+  form.append("caption", caption);
+  const headers: Record<string, string> = {};
+  if (csrfToken) headers["x-csrf-token"] = csrfToken;
+  const response = await fetch(`${API_URL}/evidence`, {
+    method: "POST",
+    headers,
+    credentials: "include",
+    body: form,
+  });
+  const text = await response.text();
+  const body = text ? JSON.parse(text) : null;
+  if (!response.ok) {
+    throw new ApiError(
+      response.status,
+      body?.error?.code ?? "REQUEST_FAILED",
+      body?.error?.message ?? "Request failed",
+    );
+  }
+  return body as Evidence;
+}
+
+export async function downloadEvidence(evidenceId: string): Promise<Blob> {
+  const response = await fetch(`${API_URL}/evidence/${evidenceId}/download`, {
+    credentials: "include",
+  });
+  if (!response.ok) {
+    const body = await response.json().catch(() => null);
+    throw new ApiError(
+      response.status,
+      body?.error?.code ?? "REQUEST_FAILED",
+      body?.error?.message ?? "Request failed",
+    );
+  }
+  return response.blob();
+}

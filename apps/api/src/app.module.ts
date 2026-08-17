@@ -10,6 +10,7 @@ import { StaffModule } from "./staff/staff.module";
 import { AttendanceModule } from "./attendance/attendance.module";
 import { AbsenceModule } from "./absence/absence.module";
 import { WorkLogModule } from "./work-log/work-log.module";
+import { EvidenceModule } from "./evidence/evidence.module";
 
 @Module({
   imports: [
@@ -24,6 +25,7 @@ import { WorkLogModule } from "./work-log/work-log.module";
     AttendanceModule,
     AbsenceModule,
     WorkLogModule,
+    EvidenceModule,
   ],
 })
 export class AppModule {}
