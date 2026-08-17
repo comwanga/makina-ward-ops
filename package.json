@@ -17,7 +17,8 @@
     "db:generate": "pnpm --filter @ward-ops/database db:generate",
     "db:migrate": "pnpm --filter @ward-ops/database db:migrate",
     "db:deploy": "pnpm --filter @ward-ops/database db:deploy",
-    "db:seed": "pnpm --filter @ward-ops/database db:seed"
+    "db:seed": "pnpm --filter @ward-ops/database db:seed",
+    "db:migrate-legacy": "pnpm --filter @ward-ops/api migrate:legacy"
   },
   "devDependencies": {
     "@eslint/js": "^9.17.0",

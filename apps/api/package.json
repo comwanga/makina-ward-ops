@@ -11,6 +11,7 @@
     "test": "vitest run",
     "test:watch": "vitest",
     "test:integration": "pnpm build && vitest run --config vitest.integration.config.ts",
+    "migrate:legacy": "tsx src/migration/cli.ts",
     "lint": "echo \"(lint runs from workspace root)\""
   },
   "dependencies": {
