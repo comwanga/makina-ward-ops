@@ -62,6 +62,9 @@ export const reportQuerySchema = z.object({
   ...paginationSchema.shape,
 });
 
+export const reportAiDraftSchema = reportPreviewQuerySchema;
+
 export type ReportPreviewQueryInput = z.infer<typeof reportPreviewQuerySchema>;
 export type ReportFinalizeInput = z.infer<typeof reportFinalizeSchema>;
 export type ReportQueryInput = z.infer<typeof reportQuerySchema>;
+export type ReportAiDraftInput = z.infer<typeof reportAiDraftSchema>;

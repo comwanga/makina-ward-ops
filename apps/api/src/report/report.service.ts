@@ -1,11 +1,13 @@
 import {
   ForbiddenException,
+  Inject,
   Injectable,
   NotFoundException,
 } from "@nestjs/common";
 import { Prisma } from "@ward-ops/database";
 import type { AttendanceStatus, EvidenceStage } from "@ward-ops/contracts";
 import type {
+  ReportAiDraftInput,
   ReportFinalizeInput,
   ReportPreviewQueryInput,
   ReportQueryInput,
@@ -14,6 +16,8 @@ import { AuthContext } from "../auth/auth-context";
 import { ScopeService } from "../authorization/scope.service";
 import { AttendanceService } from "../attendance/attendance.service";
 import { AuditService } from "../audit/audit.service";
+import { APP_CONFIG } from "../config/config.module";
+import type { AppConfig } from "../config/config";
 import { PrismaService } from "../prisma/prisma.service";
 import {
   ReportSnapshot,
@@ -21,6 +25,7 @@ import {
   ReportDayWard,
   ReportRosterRow,
   ReportWorkLog,
+  aiNarrative,
   deterministicNarrative,
   deterministicRecommendations,
   emptyTotals,
@@ -77,6 +82,7 @@ export class ReportService {
     private readonly scope: ScopeService,
     private readonly attendance: AttendanceService,
     private readonly audit: AuditService,
+    @Inject(APP_CONFIG) private readonly config: AppConfig,
   ) {}
 
   // -- Helpers ----------------------------------------------------------------
@@ -307,6 +313,32 @@ export class ReportService {
   }
 
   // -- Reads ------------------------------------------------------------------
+
+  async aiDraft(
+    auth: AuthContext,
+    input: ReportAiDraftInput,
+    meta: RequestMeta,
+  ): Promise<Record<string, unknown>> {
+    const snapshot = await this.buildSnapshot(auth, input);
+    const { narrative, source } = await aiNarrative(snapshot, this.config.ai);
+    await this.audit.record({
+      action: "REPORT.NARRATIVE_DRAFTED",
+      targetType: "Report",
+      scopeType: input.scopeType,
+      scopeId: input.scopeId,
+      actorUserId: auth.userId,
+      sourceIp: meta.sourceIp,
+      requestId: meta.requestId,
+      details: source === "ai" ? "AI enabled" : "Deterministic fallback",
+    });
+    return {
+      snapshot,
+      narrative,
+      narrativeSource: source,
+      recommendations: deterministicRecommendations(snapshot.workLogs),
+      title: reportTitle(input.kind, snapshot.scopeName),
+    };
+  }
 
   async preview(
     auth: AuthContext,

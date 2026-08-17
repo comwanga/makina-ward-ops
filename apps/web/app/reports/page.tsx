@@ -11,6 +11,7 @@ import {
   ReportPreview,
   ReportScopeType,
   downloadReportCsv,
+  draftReportNarrative,
   fetchMe,
   fetchOrganisationTree,
   fetchReport,
@@ -72,6 +73,7 @@ export default function ReportsPage() {
   const [error, setError] = useState<string | null>(null);
   const [notice, setNotice] = useState<string | null>(null);
   const [submitting, setSubmitting] = useState(false);
+  const [drafting, setDrafting] = useState(false);
   const [form, setForm] = useState({
     scopeId: "",
     startDate: nairobiToday(),
@@ -159,6 +161,30 @@ export default function ReportsPage() {
       setError(err instanceof ApiError ? err.message : "Unable to finalize report");
     } finally {
       setSubmitting(false);
+    }
+  }
+
+  async function onAiDraft() {
+    setError(null);
+    setNotice(null);
+    setDrafting(true);
+    try {
+      const draft = await draftReportNarrative(periodInput);
+      setPreview(draft);
+      setForm((current) => ({
+        ...current,
+        narrative: draft.narrative,
+        recommendations: draft.recommendations,
+      }));
+      setNotice(
+        draft.narrativeSource === "ai"
+          ? "AI narrative draft generated."
+          : "AI narrative unavailable — used deterministic fallback.",
+      );
+    } catch (err) {
+      setError(err instanceof ApiError ? err.message : "Unable to draft narrative");
+    } finally {
+      setDrafting(false);
     }
   }
 
@@ -278,6 +304,16 @@ export default function ReportsPage() {
               rows={4}
             />
           </label>
+          {can("REPORTS_FINALIZE") && (
+            <button
+              type="button"
+              className="link-btn"
+              onClick={() => void onAiDraft()}
+              disabled={drafting}
+            >
+              {drafting ? "Drafting…" : "Draft narrative with AI"}
+            </button>
+          )}
           <label>
             Recommendations
             <textarea
