@@ -1,6 +1,7 @@
 import { Body, Controller, Get, Param, Post, Query, Req, StreamableFile } from "@nestjs/common";
 import type { FastifyRequest } from "fastify";
 import {
+  reportAiDraftSchema,
   reportFinalizeSchema,
   reportPreviewQuerySchema,
   reportQuerySchema,
@@ -32,6 +33,17 @@ export class ReportController {
   preview(@Query() query: Record<string, string>, @CurrentUser() auth: AuthContext | undefined) {
     const input = reportPreviewQuerySchema.parse(query);
     return this.reports.preview(auth!, input);
+  }
+
+  @RequireCapability("REPORTS_FINALIZE")
+  @Post("ai-draft")
+  aiDraft(
+    @Body() body: unknown,
+    @CurrentUser() auth: AuthContext | undefined,
+    @Req() request: FastifyRequest,
+  ) {
+    const input = reportAiDraftSchema.parse(body);
+    return this.reports.aiDraft(auth!, input, meta(request));
   }
 
   @RequireCapability("REPORTS_FINALIZE")

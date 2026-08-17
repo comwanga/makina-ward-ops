@@ -1,6 +1,9 @@
 import { describe, expect, it } from "vitest";
 import {
+  AiHttpClient,
   ReportPhotoRef,
+  ReportSnapshot,
+  aiNarrative,
   deterministicNarrative,
   deterministicRecommendations,
   emptyTotals,
@@ -10,6 +13,7 @@ import {
   isWeekend,
   reportTitle,
   samplePeriodPhotos,
+  structuredAiPayload,
 } from "../src/report/report-aggregation";
 
 function photo(evidenceId: string, stage: "BEFORE" | "DURING" | "AFTER"): ReportPhotoRef {
@@ -155,6 +159,170 @@ describe("report aggregation (§25, §26, ADR-0007)", () => {
       expect(escapeCsvCell("a, b")).toBe('"a, b"');
       expect(escapeCsvCell('say "hi"')).toBe('"say ""hi"""');
       expect(escapeCsvCell("line1\nline2")).toBe('"line1\nline2"');
+    });
+  });
+
+  describe("structured AI payload (§8 privacy)", () => {
+    function snapshotWithWork(): ReportSnapshot {
+      const totals = emptyTotals();
+      totals.PRESENT = 3;
+      return {
+        scopeType: "WARD",
+        scopeId: "cly0",
+        scopeName: "Makina",
+        startDate: "2026-01-05",
+        endDate: "2026-01-05",
+        kind: "DAILY",
+        generatedAt: "2026-01-05T10:00:00.000Z",
+        signedBy: null,
+        signedTitle: null,
+        totals,
+        days: [],
+        workLogs: [
+          {
+            id: "wl1",
+            wardId: "w1",
+            wardName: "Makina",
+            date: "2026-01-05",
+            activity: "Drainage desilting",
+            location: "Makina Market area",
+            areasRoads: "Moktar Daddah Road",
+            description: "Desilted open drains",
+            numberOfTrips: 4,
+            wasteTransferInvolved: false,
+            truckId: null,
+            backhoeId: null,
+            cleanupDone: false,
+            cleanupStakeholders: null,
+            climateTeamCount: 0,
+            staffCount: 6,
+            challenges: "Rain delayed progress",
+            completionStatus: "INCOMPLETE",
+            outstandingWork: "Second-pass desilting",
+            photos: [
+              { evidenceId: "ev1", objectKey: "objects/ev1", sha256: "a".repeat(64), caption: null, stage: "AFTER" },
+            ],
+          },
+        ],
+      };
+    }
+
+    it("includes only period, totals and approved-work facts", () => {
+      const payload = structuredAiPayload(snapshotWithWork());
+      expect(payload.period).toEqual(["2026-01-05", "2026-01-05"]);
+      expect(payload.attendanceTotals).toEqual({
+        PRESENT: 3,
+        LATE: 0,
+        ABSENT: 0,
+        OFF_DUTY: 0,
+        SICK_OFF: 0,
+        LEAVE: 0,
+        OFFICIAL_DUTY: 0,
+      });
+      expect(payload.approvedWork).toHaveLength(1);
+      expect(payload.approvedWork[0]).toEqual({
+        date: "2026-01-05",
+        activity: "Drainage desilting",
+        location: "Makina Market area",
+        areasRoads: "Moktar Daddah Road",
+        numberOfTrips: 4,
+        staffCount: 6,
+        completionStatus: "INCOMPLETE",
+      });
+    });
+
+    it("excludes employee numbers, phones, descriptions, challenges and evidence", () => {
+      const payload = structuredAiPayload(snapshotWithWork());
+      const serialized = JSON.stringify(payload);
+      expect(serialized).not.toContain("descript");
+      expect(serialized).not.toContain("challenges");
+      expect(serialized).not.toContain("Rain delayed");
+      expect(serialized).not.toContain("outstandingWork");
+      expect(serialized).not.toContain("objects/ev1");
+      expect(serialized).not.toContain("evidence");
+      expect(serialized).not.toContain("employeeNumber");
+      expect(serialized).not.toContain("phone");
+    });
+  });
+
+  describe("AI narrative (§25 optional, §8 fallback)", () => {
+    const aiConfig = {
+      enabled: true,
+      baseUrl: "https://llm.test/v1",
+      apiKey: "key-123",
+      model: "llama-3.1-8b-instant",
+    };
+    const emptySnapshot: ReportSnapshot = {
+      scopeType: "WARD",
+      scopeId: "cly0",
+      scopeName: "Makina",
+      startDate: "2026-01-05",
+      endDate: "2026-01-05",
+      kind: "DAILY",
+      generatedAt: "2026-01-05T10:00:00.000Z",
+      signedBy: null,
+      signedTitle: null,
+      totals: emptyTotals(),
+      days: [],
+      workLogs: [],
+    };
+
+    it("uses the deterministic fallback when AI is disabled", async () => {
+      const result = await aiNarrative(emptySnapshot, { ...aiConfig, enabled: false });
+      expect(result.source).toBe("deterministic");
+      expect(result.narrative).toBe(deterministicNarrative(emptySnapshot.totals, []));
+    });
+
+    it("uses the deterministic fallback when no API key is configured", async () => {
+      const result = await aiNarrative(emptySnapshot, { ...aiConfig, apiKey: undefined });
+      expect(result.source).toBe("deterministic");
+    });
+
+    it("POSTs the minimized payload and returns the model content", async () => {
+      const requests: Array<{ url: string; init: Parameters<AiHttpClient>[1] }> = [];
+      const http: AiHttpClient = async (url, init) => {
+        requests.push({ url, init });
+        return {
+          ok: true,
+          json: async () => ({
+            choices: [{ message: { content: "  AI drafted narrative.  " } }],
+          }),
+        };
+      };
+      const result = await aiNarrative(emptySnapshot, aiConfig, http);
+      expect(result.source).toBe("ai");
+      expect(result.narrative).toBe("AI drafted narrative.");
+      expect(requests[0].url).toBe("https://llm.test/v1/chat/completions");
+      expect(requests[0].init.headers.Authorization).toBe("Bearer key-123");
+      const sent = JSON.parse(requests[0].init.body) as { model: string; temperature: number; max_tokens: number };
+      expect(sent.model).toBe("llama-3.1-8b-instant");
+      expect(sent.temperature).toBe(0.1);
+      expect(sent.max_tokens).toBe(600);
+      expect(JSON.parse(requests[0].init.body).messages).toHaveLength(2);
+    });
+
+    it("falls back when the upstream request fails", async () => {
+      const http: AiHttpClient = async () => ({ ok: false, json: async () => ({}) });
+      const result = await aiNarrative(emptySnapshot, aiConfig, http);
+      expect(result.source).toBe("deterministic");
+    });
+
+    it("falls back on malformed upstream responses", async () => {
+      const http: AiHttpClient = async () => ({
+        ok: true,
+        json: async () => ({ choices: [] }),
+      });
+      const result = await aiNarrative(emptySnapshot, aiConfig, http);
+      expect(result.source).toBe("deterministic");
+    });
+
+    it("falls back when the transport throws", async () => {
+      const http: AiHttpClient = async () => {
+        throw new Error("network down");
+      };
+      const result = await aiNarrative(emptySnapshot, aiConfig, http);
+      expect(result.source).toBe("deterministic");
+      expect(result.narrative).toBe(deterministicNarrative(emptySnapshot.totals, []));
     });
   });
 });

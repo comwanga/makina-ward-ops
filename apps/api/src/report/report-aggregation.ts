@@ -197,3 +197,122 @@ export function escapeCsvCell(value: unknown): string {
   if (/[",\n\r]/.test(text)) text = `"${text.replace(/"/g, '""')}"`;
   return text;
 }
+
+// ---------------------------------------------------------------------------
+// Optional AI narrative (§25, §39): AI must never calculate authoritative
+// statistics; it only drafts the narrative text from a minimized payload that
+// excludes names, IDs, phones, free-text, medical details and challenges.
+// ---------------------------------------------------------------------------
+
+export interface AiApprovedWork {
+  date: string;
+  activity: string;
+  location: string;
+  areasRoads: string;
+  numberOfTrips: number;
+  staffCount: number;
+  completionStatus: string;
+}
+
+export interface AiPayload {
+  period: [string, string];
+  attendanceTotals: Record<AttendanceStatus, number>;
+  approvedWork: AiApprovedWork[];
+}
+
+export interface AiNarrativeConfig {
+  enabled: boolean;
+  baseUrl: string;
+  apiKey?: string;
+  model: string;
+}
+
+export type AiHttpClient = (
+  url: string,
+  init: {
+    method: string;
+    headers: Record<string, string>;
+    body: string;
+    signal: AbortSignal;
+  },
+) => Promise<{ ok: boolean; json(): Promise<unknown> }>;
+
+export interface AiNarrativeResult {
+  narrative: string;
+  source: "ai" | "deterministic";
+}
+
+const AI_SYSTEM_PROMPT =
+  "Draft a concise formal Nairobi ward environment operations report using only supplied facts. " +
+  "Never invent names, quantities, places, activities, causes or recommendations. " +
+  "Clearly identify missing information instead of guessing.";
+
+/**
+ * Minimized payload sent to the LLM (§8): period, attendance totals and
+ * approved-work facts only. Employee names/numbers, phones, descriptions,
+ * challenges and evidence references are never included.
+ */
+export function structuredAiPayload(snapshot: ReportSnapshot): AiPayload {
+  return {
+    period: [snapshot.startDate, snapshot.endDate],
+    attendanceTotals: snapshot.totals,
+    approvedWork: snapshot.workLogs.map((item) => ({
+      date: item.date,
+      activity: item.activity,
+      location: item.location,
+      areasRoads: item.areasRoads,
+      numberOfTrips: item.numberOfTrips,
+      staffCount: item.staffCount,
+      completionStatus: item.completionStatus,
+    })),
+  };
+}
+
+/**
+ * Drafts a narrative with the configured LLM, falling back to the
+ * deterministic narrative whenever AI is disabled, unconfigured or fails
+ * (§8 "no-AI fallback"). Never throws.
+ */
+export async function aiNarrative(
+  snapshot: ReportSnapshot,
+  config: AiNarrativeConfig,
+  http: AiHttpClient = globalThis.fetch as unknown as AiHttpClient,
+): Promise<AiNarrativeResult> {
+  const fallback = deterministicNarrative(snapshot.totals, snapshot.workLogs);
+  if (!config.enabled || !config.apiKey) {
+    return { narrative: fallback, source: "deterministic" };
+  }
+  const payload = structuredAiPayload(snapshot);
+  const controller = new AbortController();
+  const timer = setTimeout(() => controller.abort(), 20_000);
+  try {
+    const response = await http(`${config.baseUrl.replace(/\/$/, "")}/chat/completions`, {
+      method: "POST",
+      headers: {
+        Authorization: `Bearer ${config.apiKey}`,
+        "Content-Type": "application/json",
+      },
+      body: JSON.stringify({
+        model: config.model,
+        temperature: 0.1,
+        max_tokens: 600,
+        messages: [
+          { role: "system", content: AI_SYSTEM_PROMPT },
+          { role: "user", content: JSON.stringify(payload) },
+        ],
+      }),
+      signal: controller.signal,
+    });
+    if (!response.ok) return { narrative: fallback, source: "deterministic" };
+    const data = (await response.json()) as {
+      choices?: Array<{ message?: { content?: string } }>;
+    };
+    const content = data.choices?.[0]?.message?.content?.trim();
+    if (!content) return { narrative: fallback, source: "deterministic" };
+    return { narrative: content, source: "ai" };
+  } catch {
+    return { narrative: fallback, source: "deterministic" };
+  } finally {
+    clearTimeout(timer);
+  }
+}

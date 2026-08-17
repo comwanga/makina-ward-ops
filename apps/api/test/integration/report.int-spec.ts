@@ -675,6 +675,114 @@ describe("reports (integration)", () => {
     expect(blocked.statusCode).toBe(403);
   });
 
+  // -- Optional AI narrative (§25, §39) ---------------------------------------
+
+  it("requires REPORTS_FINALIZE to draft an AI narrative", async () => {
+    const payload = {
+      scopeType: "WARD",
+      scopeId: makinaWard.id,
+      startDate: MONDAY,
+      endDate: MONDAY,
+      kind: "DAILY",
+    };
+
+    const unauth = await api(app, {
+      method: "POST",
+      url: "/api/v1/reports/ai-draft",
+      payload,
+    });
+    expect(unauth.statusCode).toBe(401);
+
+    const denied = await api(app, {
+      method: "POST",
+      url: "/api/v1/reports/ai-draft",
+      cookie: officer.cookie,
+      csrf: officer.csrf,
+      payload,
+    });
+    expect(denied.statusCode).toBe(403);
+
+    const readOnlyDraft = await api(app, {
+      method: "POST",
+      url: "/api/v1/reports/ai-draft",
+      cookie: readOnly.cookie,
+      csrf: readOnly.csrf,
+      payload,
+    });
+    expect(readOnlyDraft.statusCode).toBe(403);
+  });
+
+  it("drafts a deterministic narrative fallback when AI is disabled and audits it", async () => {
+    const presentId = await createEmployee("20250100100", "Present Staff", makinaWard.id);
+    const session = await createSession(makinaWard.id, MONDAY);
+    await createAttendance(presentId, session.id, makinaWard.id, MONDAY, "PRESENT");
+    await createApprovedWorkLog(makinaWard.id, MONDAY, { numberOfTrips: 2 });
+
+    const payload = {
+      scopeType: "WARD",
+      scopeId: makinaWard.id,
+      startDate: MONDAY,
+      endDate: MONDAY,
+      kind: "DAILY",
+    };
+    const draft = await api(app, {
+      method: "POST",
+      url: "/api/v1/reports/ai-draft",
+      cookie: reviewer.cookie,
+      csrf: reviewer.csrf,
+      payload,
+    });
+    expect(draft.statusCode).toBe(201);
+    const body = draft.json() as Record<string, any>;
+    expect(body.narrativeSource).toBe("deterministic");
+    expect(body.narrative).toContain("1 approved work activities were recorded");
+    expect(body.narrative).toContain("2 trips (Drainage desilting)");
+    expect(body.recommendations).toContain("Sustain the completed activities");
+    expect(body.snapshot.totals.PRESENT).toBe(1);
+    expect(body.title).toContain("Makina");
+
+    const audit = await prisma.auditEvent.findFirst({
+      where: { action: "REPORT.NARRATIVE_DRAFTED" },
+      orderBy: { id: "desc" },
+    });
+    expect(audit).toBeTruthy();
+    expect(audit!.details).toBe("Deterministic fallback");
+    expect(audit!.scopeId).toBe(makinaWard.id);
+  });
+
+  it("drafts the AI narrative from a minimized payload that omits personal data", async () => {
+    const presentId = await createEmployee(
+      "20250100100",
+      "PERSONAL NAME",
+      makinaWard.id,
+      "Ward Supervisor",
+    );
+    const session = await createSession(makinaWard.id, MONDAY);
+    await createAttendance(presentId, session.id, makinaWard.id, MONDAY, "PRESENT");
+    await createApprovedWorkLog(makinaWard.id, MONDAY, { numberOfTrips: 1 });
+
+    const payload = {
+      scopeType: "WARD",
+      scopeId: makinaWard.id,
+      startDate: MONDAY,
+      endDate: MONDAY,
+      kind: "DAILY",
+    };
+    const draft = await api(app, {
+      method: "POST",
+      url: "/api/v1/reports/ai-draft",
+      cookie: reviewer.cookie,
+      csrf: reviewer.csrf,
+      payload,
+    });
+    expect(draft.statusCode).toBe(201);
+    const narrative = (draft.json() as Record<string, any>).narrative as string;
+    // The deterministic fallback never contains employee names or numbers.
+    expect(narrative).not.toContain("PERSONAL NAME");
+    expect(narrative).not.toContain("20250100100");
+    expect(narrative).not.toContain("Ward Supervisor");
+  });
+
   // -- Period validation -------------------------------------------------------
 
   it("rejects an invalid report period", async () => {

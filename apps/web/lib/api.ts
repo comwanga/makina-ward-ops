@@ -680,6 +680,10 @@ export interface ReportPreview {
   title: string;
 }
 
+export interface ReportAiDraft extends ReportPreview {
+  narrativeSource: "ai" | "deterministic";
+}
+
 export interface ReportPeriodInput {
   scopeType: ReportScopeType;
   scopeId: string;
@@ -701,6 +705,10 @@ export async function previewReport(input: ReportPeriodInput): Promise<ReportPre
   params.set("endDate", input.endDate);
   params.set("kind", input.kind);
   return apiFetch<ReportPreview>(`/reports/preview?${params.toString()}`);
+}
+
+export async function draftReportNarrative(input: ReportPeriodInput): Promise<ReportAiDraft> {
+  return apiFetch<ReportAiDraft>("/reports/ai-draft", { method: "POST", body: input });
 }
 
 export async function finalizeReport(
