@@ -13,8 +13,14 @@ import { LocalObjectStorage, ObjectStorage, S3ObjectStorage } from "./object-sto
     {
       provide: ObjectStorage,
       inject: [APP_CONFIG],
-      useFactory: (config: AppConfig) =>
-        config.storage.configured ? new S3ObjectStorage(config) : new LocalObjectStorage(config),
+      useFactory: (config: AppConfig) => {
+        if (config.env === "production" && !config.storage.configured) {
+          throw new Error(
+            "Object storage is required in production (S3_BUCKET, S3_ACCESS_KEY_ID, S3_SECRET_ACCESS_KEY); refusing to fall back to container-local storage",
+          );
+        }
+        return config.storage.configured ? new S3ObjectStorage(config) : new LocalObjectStorage(config);
+      },
     },
   ],
   exports: [ObjectStorage],

@@ -39,6 +39,17 @@ const envSchema = z
           path: ["SECURE_COOKIES"],
         });
       }
+      // Container-local storage is only acceptable for development/test.
+      // In production, silently falling back to the local filesystem would
+      // lose evidence on redeploy, so require real object storage instead.
+      if (!env.S3_BUCKET || !env.S3_ACCESS_KEY_ID || !env.S3_SECRET_ACCESS_KEY) {
+        ctx.addIssue({
+          code: z.ZodIssueCode.custom,
+          message:
+            "S3_BUCKET, S3_ACCESS_KEY_ID and S3_SECRET_ACCESS_KEY are required in production so evidence is not silently stored on the container filesystem",
+          path: ["S3_BUCKET"],
+        });
+      }
     }
   });
 

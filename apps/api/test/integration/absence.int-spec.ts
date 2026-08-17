@@ -501,6 +501,96 @@ describe("absence management (integration)", () => {
     expect(restricted.statusCode).toBe(403);
   });
 
+  it("regression: document download detects a missing stored object (read integrity)", async () => {
+    const { body } = await createAbsence({
+      employeeId,
+      kind: "SICK_OFF",
+      startDate: todayNairobi(),
+      endDate: todayNairobi(),
+      returnDate: addDays(todayNairobi(), 1),
+      reason: "Reported sick with malaria",
+    });
+    const absenceId = (body as Record<string, any>).id;
+
+    const upload = multipart({ documentCategory: "SICK_SHEET" }, {
+      name: "sick-sheet.pdf",
+      data: Buffer.from("%PDF-1.4\n1 0 obj\n<<>>\nendobj\ntrailer\n<<>>\n%%EOF"),
+    });
+    const uploaded = await app.inject({
+      method: "POST",
+      url: `/api/v1/absence-requests/${absenceId}/documents`,
+      headers: {
+        cookie: officer.cookie!,
+        "x-csrf-token": officer.csrf!,
+        "content-type": upload.contentType,
+      },
+      payload: upload.body,
+    });
+    expect(uploaded.statusCode).toBe(201);
+
+    // objectKey is intentionally not exposed over the API; read it from the
+    // database to simulate the lost-object scenario (§24).
+    const row = await prisma.document.findFirstOrThrow({
+      where: { absenceRequestId: absenceId },
+    });
+    const { unlink } = await import("node:fs/promises");
+    const path = await import("node:path");
+    const objectPath = path.join(path.resolve("data/documents"), row.objectKey);
+    await unlink(objectPath);
+
+    const download = await api(app, {
+      method: "GET",
+      url: `/api/v1/absence-requests/documents/${row.id}/download`,
+      cookie: hr.cookie,
+    });
+    expect(download.statusCode).toBe(404);
+  });
+
+  it("regression: document download rejects a corrupted stored object (sha256 check)", async () => {
+    const { body } = await createAbsence({
+      employeeId,
+      kind: "SICK_OFF",
+      startDate: todayNairobi(),
+      endDate: todayNairobi(),
+      returnDate: addDays(todayNairobi(), 1),
+      reason: "Reported sick with malaria",
+    });
+    const absenceId = (body as Record<string, any>).id;
+
+    const upload = multipart({ documentCategory: "SICK_SHEET" }, {
+      name: "sick-sheet.pdf",
+      data: Buffer.from("%PDF-1.4\n1 0 obj\n<<>>\nendobj\ntrailer\n<<>>\n%%EOF"),
+    });
+    const uploaded = await app.inject({
+      method: "POST",
+      url: `/api/v1/absence-requests/${absenceId}/documents`,
+      headers: {
+        cookie: officer.cookie!,
+        "x-csrf-token": officer.csrf!,
+        "content-type": upload.contentType,
+      },
+      payload: upload.body,
+    });
+    expect(uploaded.statusCode).toBe(201);
+
+    const row = await prisma.document.findFirstOrThrow({
+      where: { absenceRequestId: absenceId },
+    });
+    const path = await import("node:path");
+    const { writeFile } = await import("node:fs/promises");
+    await writeFile(
+      path.join(path.resolve("data/documents"), row.objectKey),
+      Buffer.from("corrupted bytes"),
+    );
+
+    const download = await api(app, {
+      method: "GET",
+      url: `/api/v1/absence-requests/documents/${row.id}/download`,
+      cookie: hr.cookie,
+    });
+    expect(download.statusCode).toBe(404);
+  });
+
   it("queues idempotent leave reminders at 30/14/7 days", async () => {
     const employee = await prisma.employee.update({
       where: { id: employeeId },
