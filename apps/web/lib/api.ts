@@ -398,3 +398,90 @@ export async function downloadAbsenceDocument(documentId: string): Promise<Blob>
   }
   return response.blob();
 }
+
+export type WorkLogStatus = "SUBMITTED" | "APPROVED" | "REJECTED";
+export type WorkLogAction = "APPROVE" | "REJECT";
+export type CompletionStatus = "COMPLETE" | "INCOMPLETE";
+
+export interface WorkLogOperations {
+  areasRoads: string;
+  numberOfTrips: number;
+  wasteTransferInvolved: boolean;
+  truckId: string | null;
+  backhoeId: string | null;
+  cleanupDone: boolean;
+  cleanupStakeholders: string | null;
+  climateTeamCount: number;
+}
+
+export interface WorkLogDetail {
+  completionStatus: CompletionStatus;
+  outstandingWork: string | null;
+}
+
+export interface WorkLog {
+  id: string;
+  wardId: string;
+  workDate: string;
+  activity: string;
+  location: string;
+  description: string;
+  staffCount: number;
+  challenges: string | null;
+  status: WorkLogStatus;
+  version: number;
+  submittedBy: string;
+  reviewedBy: string | null;
+  reviewNote: string | null;
+  createdAt: string;
+  reviewedAt: string | null;
+  detail: WorkLogDetail;
+  operations: WorkLogOperations;
+}
+
+export interface CreateWorkLogInput {
+  wardId: string;
+  workDate: string;
+  activity: string;
+  location: string;
+  areasRoads: string;
+  description: string;
+  numberOfTrips?: number;
+  wasteTransferInvolved?: boolean;
+  truckId?: string;
+  backhoeId?: string;
+  staffCount?: number;
+  challenges?: string | null;
+  cleanupDone?: boolean;
+  cleanupStakeholders?: string;
+  climateTeamCount?: number;
+  completionStatus?: CompletionStatus;
+  outstandingWork?: string;
+}
+
+export async function listWorkLogs(query?: {
+  wardId?: string;
+  workDate?: string;
+  status?: WorkLogStatus;
+}): Promise<WorkLog[]> {
+  const params = new URLSearchParams();
+  if (query?.wardId) params.set("wardId", query.wardId);
+  if (query?.workDate) params.set("workDate", query.workDate);
+  if (query?.status) params.set("status", query.status);
+  const suffix = params.toString() ? `?${params.toString()}` : "";
+  return apiFetch<WorkLog[]>(`/work-logs${suffix}`);
+}
+
+export async function createWorkLog(input: CreateWorkLogInput): Promise<WorkLog> {
+  return apiFetch<WorkLog>("/work-logs", { method: "POST", body: input });
+}
+
+export async function workLogAction(
+  id: string,
+  input: { action: WorkLogAction; reviewNote?: string },
+): Promise<WorkLog> {
+  return apiFetch<WorkLog>(`/work-logs/${id}/actions`, {
+    method: "POST",
+    body: input,
+  });
+}

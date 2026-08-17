@@ -102,6 +102,7 @@ export default function StaffPage() {
           <a href="/staff" aria-current="page">Staff</a>
           <a href="/attendance">Attendance</a>
           <a href="/absences">Absences</a>
+          <a href="/worklogs">Work logs</a>
         </nav>
       </header>
 

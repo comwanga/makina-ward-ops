@@ -206,6 +206,7 @@ export default function AbsencesPage() {
           <a href="/staff">Staff</a>
           <a href="/attendance">Attendance</a>
           <a href="/absences" aria-current="page">Absences</a>
+          <a href="/worklogs">Work logs</a>
         </nav>
       </header>
 

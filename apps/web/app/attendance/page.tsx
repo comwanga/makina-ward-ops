@@ -113,6 +113,7 @@ export default function AttendancePage() {
           <a href="/staff">Staff</a>
           <a href="/attendance" aria-current="page">Attendance</a>
           <a href="/absences">Absences</a>
+          <a href="/worklogs">Work logs</a>
         </nav>
       </header>
 
