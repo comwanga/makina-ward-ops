@@ -42,6 +42,10 @@ export default function AttendancePage() {
         router.push("/login");
         return;
       }
+      if (me.mustChangePassword) {
+        router.push("/account/password");
+        return;
+      }
       const [sessionList, recordList, accessible] = await Promise.all([
         listSessions(),
         listAttendance(),
@@ -73,7 +77,7 @@ export default function AttendancePage() {
     setSubmitting(true);
     try {
       const session = await createSession(form);
-      setNotice(`Session opened — token ${session.token.slice(0, 12)}…`);
+      setNotice(`Session opened — token ${session.token?.slice(0, 12) ?? ""}…`);
       setForm((current) => ({ ...current, location: "" }));
       setSessions(await listSessions());
     } catch (err) {
@@ -197,9 +201,13 @@ export default function AttendancePage() {
                   <td>{new Date(session.opensAt).toLocaleTimeString()}</td>
                   <td>{new Date(session.closesAt).toLocaleTimeString()}</td>
                   <td>
-                    <a className="checkin-link" href={checkInUrl(session)}>
-                      Open
-                    </a>
+                    {session.token ? (
+                      <a className="checkin-link" href={checkInUrl(session)}>
+                        Open
+                      </a>
+                    ) : (
+                      <span className="muted-text">—</span>
+                    )}
                   </td>
                 </tr>
               ))}

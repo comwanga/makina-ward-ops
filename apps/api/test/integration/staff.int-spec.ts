@@ -291,4 +291,35 @@ describe("staff management (integration)", () => {
     });
     expect(response.statusCode).toBe(401);
   });
+
+  it("rejects malformed input with 422 instead of 500", async () => {
+    const badWard = await api(app, {
+      method: "POST",
+      url: "/api/v1/staff",
+      cookie: officer.cookie,
+      csrf: officer.csrf,
+      payload: {
+        employeeNumber: "20250100017",
+        fullName: "Bad Ward",
+        phone: "0712000017",
+        wardId: "not-a-cuid",
+      },
+    });
+    expect(badWard.statusCode).toBe(422);
+    expect(badWard.json().error.code).toBe("VALIDATION_FAILED");
+
+    const badPhone = await api(app, {
+      method: "POST",
+      url: "/api/v1/staff",
+      cookie: officer.cookie,
+      csrf: officer.csrf,
+      payload: {
+        employeeNumber: "20250100017",
+        fullName: "Bad Phone",
+        phone: "not-a-phone",
+        wardId: makinaWard.id,
+      },
+    });
+    expect(badPhone.statusCode).toBe(422);
+  });
 });

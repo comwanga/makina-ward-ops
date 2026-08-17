@@ -42,7 +42,14 @@ export function extractCookie(
 export interface LoginSession {
   cookie: string | null;
   csrf: string | null;
-  user: { id: string; email: string; displayName: string } | undefined;
+  user:
+    | {
+        id: string;
+        email: string;
+        displayName: string;
+        mustChangePassword?: boolean;
+      }
+    | undefined;
 }
 
 export async function login(

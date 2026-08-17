@@ -1,4 +1,4 @@
-import { CanActivate, ExecutionContext, Injectable, UnauthorizedException } from "@nestjs/common";
+import { CanActivate, ExecutionContext, ForbiddenException, Injectable, UnauthorizedException } from "@nestjs/common";
 import { Reflector } from "@nestjs/core";
 import type { FastifyRequest } from "fastify";
 import { PrismaService } from "../prisma/prisma.service";
@@ -10,6 +10,8 @@ import {
   SESSION_COOKIE,
   setAuthContext,
 } from "./auth-context";
+
+const PASSWORD_CHANGE_EXEMPT = ["/auth/me", "/auth/change-password", "/auth/logout"];
 
 @Injectable()
 export class SessionAuthGuard implements CanActivate {
@@ -25,6 +27,7 @@ export class SessionAuthGuard implements CanActivate {
 
     const request = context.switchToHttp().getRequest<FastifyRequest>();
     const rawToken = request.cookies?.[SESSION_COOKIE];
+    let mustChangePassword = false;
     if (rawToken) {
       const session = await this.prisma.client.userSession.findUnique({
         where: { tokenHash: hashToken(rawToken) },
@@ -48,6 +51,7 @@ export class SessionAuthGuard implements CanActivate {
         session.expiresAt > new Date() &&
         session.user.active
       ) {
+        mustChangePassword = session.user.mustChangePassword;
         const contextValue: AuthContext = {
           userId: session.userId,
           email: session.user.email,
@@ -80,6 +84,9 @@ export class SessionAuthGuard implements CanActivate {
     }
     if (!readContext(request)) {
       throw new UnauthorizedException("Authentication required");
+    }
+    if (mustChangePassword && !PASSWORD_CHANGE_EXEMPT.some((path) => request.url.endsWith(path))) {
+      throw new ForbiddenException("Password change required before continuing");
     }
     return true;
   }

@@ -56,6 +56,7 @@ export interface AuthUser {
   id: string;
   email: string;
   displayName: string;
+  mustChangePassword: boolean;
   assignments: Array<{
     id: string;
     role: string;
@@ -97,6 +98,16 @@ export async function fetchMe(): Promise<MeResponse["user"]> {
 export async function logout(): Promise<void> {
   await apiFetch("/auth/logout", { method: "POST" });
   setCsrfToken(null);
+}
+
+export async function changePassword(
+  currentPassword: string,
+  newPassword: string,
+): Promise<void> {
+  await apiFetch("/auth/change-password", {
+    method: "POST",
+    body: { currentPassword, newPassword },
+  });
 }
 
 export async function requestAccess(input: {
@@ -174,7 +185,7 @@ export async function setStaffActive(id: string, active: boolean): Promise<Emplo
 
 export interface AttendanceSession {
   id: string;
-  token: string;
+  token?: string;
   wardId: string;
   ward: WardRef;
   workDate: string;

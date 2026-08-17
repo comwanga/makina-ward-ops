@@ -18,7 +18,7 @@ describe("loadConfig", () => {
     expect(() => loadConfig({ APP_ENV: "development" })).toThrow();
   });
 
-  it("requires SESSION_SECRET and SECURE_COOKIES in production", () => {
+  it("requires SECURE_COOKIES in production", () => {
     expect(() =>
       loadConfig({
         DATABASE_URL: "postgresql://u:p@localhost:5432/db",
@@ -29,7 +29,6 @@ describe("loadConfig", () => {
       loadConfig({
         DATABASE_URL: "postgresql://u:p@localhost:5432/db",
         APP_ENV: "production",
-        SESSION_SECRET: "x".repeat(40),
         SECURE_COOKIES: "true",
       }),
     ).not.toThrow();

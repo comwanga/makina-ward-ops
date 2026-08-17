@@ -37,6 +37,10 @@ export default function StaffPage() {
         router.push("/login");
         return;
       }
+      if (me.mustChangePassword) {
+        router.push("/account/password");
+        return;
+      }
       const [staff, accessible] = await Promise.all([listStaff(), listWards()]);
       setEmployees(staff);
       setWards(accessible);

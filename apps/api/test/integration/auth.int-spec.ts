@@ -166,4 +166,14 @@ describe("auth flow (integration)", () => {
     const bootstrapCount = await prisma.auditEvent.count({ where: { action: "AUTH.BOOTSTRAP" } });
     expect(bootstrapCount).toBeGreaterThanOrEqual(1);
   });
+
+  it("exposes health endpoints without authentication", async () => {
+    const live = await api(app, { method: "GET", url: "/health/live" });
+    expect(live.statusCode).toBe(200);
+    expect(live.json().status).toBe("ok");
+
+    const ready = await api(app, { method: "GET", url: "/health/ready" });
+    expect(ready.statusCode).toBe(200);
+    expect(ready.json().status).toBe("ready");
+  });
 });

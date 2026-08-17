@@ -88,5 +88,8 @@ jobs:
       - name: Re-run seed (idempotency)
         run: pnpm --filter @ward-ops/database db:seed
 
+      - name: Build workspace packages
+        run: pnpm --filter @ward-ops/contracts build && pnpm --filter @ward-ops/validation build && pnpm --filter @ward-ops/database build
+
       - name: API integration tests (auth, tenancy, access requests)
         run: pnpm --filter @ward-ops/api test:integration

@@ -7,7 +7,6 @@ const envSchema = z
     PORT: z.coerce.number().int().positive().default(4000),
     DATABASE_URL: z.string().min(1, "DATABASE_URL is required"),
     PUBLIC_BASE_URL: z.string().url().optional(),
-    SESSION_SECRET: z.string().min(32).optional(),
     SESSION_HOURS: z.coerce.number().int().positive().default(12),
     SECURE_COOKIES: z.string().optional(),
     S3_ENDPOINT: z.string().optional(),
@@ -32,13 +31,6 @@ const envSchema = z
   })
   .superRefine((env, ctx) => {
     if (env.APP_ENV === "production") {
-      if (!env.SESSION_SECRET || env.SESSION_SECRET.length < 32) {
-        ctx.addIssue({
-          code: z.ZodIssueCode.custom,
-          message: "SESSION_SECRET (>= 32 chars) is required in production",
-          path: ["SESSION_SECRET"],
-        });
-      }
       if (env.SECURE_COOKIES === undefined || env.SECURE_COOKIES !== "true") {
         ctx.addIssue({
           code: z.ZodIssueCode.custom,
@@ -56,7 +48,6 @@ export interface AppConfig {
   port: number;
   databaseUrl: string;
   publicBaseUrl: string;
-  sessionSecret: string;
   sessionHours: number;
   secureCookies: boolean;
   storage: {
@@ -96,11 +87,6 @@ export function loadConfig(env: NodeJS.ProcessEnv = process.env): AppConfig {
     port: parsed.PORT,
     databaseUrl: parsed.DATABASE_URL,
     publicBaseUrl: parsed.PUBLIC_BASE_URL ?? "http://127.0.0.1:3000",
-    sessionSecret:
-      parsed.SESSION_SECRET ??
-      (parsed.APP_ENV === "production"
-        ? ""
-        : "development-insecure-session-secret-change-me"),
     sessionHours: parsed.SESSION_HOURS,
     secureCookies,
     storage: {

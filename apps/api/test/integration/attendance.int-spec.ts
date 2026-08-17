@@ -198,6 +198,29 @@ describe("attendance (integration)", () => {
     expect(response.statusCode).toBe(400);
   });
 
+  it("deterministically checks in the correct employee when numbers collide across wards", async () => {
+    const session = await createSession();
+    await createEmployee(prisma, {
+      employeeNumber: "20250100999",
+      fullName: "Woodley Duplicate",
+      phone: "0713000999",
+      wardId: woodleyWard.id,
+    });
+    await createEmployee(prisma, {
+      employeeNumber: "20250100999",
+      fullName: "Makina Duplicate",
+      phone: "0713000998",
+      wardId: makinaWard.id,
+    });
+    const response = await api(app, {
+      method: "POST",
+      url: `/api/v1/attendance/sessions/${session.token}/check-in`,
+      payload: { employeeNumber: "20250100999" },
+    });
+    expect(response.statusCode).toBe(200);
+    expect(response.json().employee.fullName).toBe("Makina Duplicate");
+  });
+
   it("rejects check-in into an expired session", async () => {
     const session = await createSession();
     await prisma.attendanceSession.update({

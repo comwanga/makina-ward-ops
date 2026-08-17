@@ -73,6 +73,32 @@ export class AttendanceService {
     }
   }
 
+  /**
+   * Resolves the employee for a QR check-in deterministically. Employee
+   * numbers are only unique within a ward, so prefer the employee homed in the
+   * session ward before falling back to one actively assigned to it.
+   */
+  private async findCheckInEmployee(
+    employeeNumber: string,
+    wardId: string,
+  ): Promise<Prisma.EmployeeGetPayload<{ include: { assignments: true } }> | null> {
+    const homed = await this.prisma.client.employee.findFirst({
+      where: { employeeNumber, active: true, wardId },
+      include: { assignments: true },
+    });
+    if (homed) {
+      return homed;
+    }
+    return this.prisma.client.employee.findFirst({
+      where: {
+        employeeNumber,
+        active: true,
+        assignments: { some: { wardId, endedAt: null } },
+      },
+      include: { assignments: true },
+    });
+  }
+
   // -- Sessions --------------------------------------------------------------
 
   async createSession(
@@ -84,32 +110,40 @@ export class AttendanceService {
     const workDate = input.workDate ?? todayNairobi();
     const workDateDate = toDateOnly(workDate);
 
-    const active = await this.prisma.client.attendanceSession.findFirst({
-      where: {
-        wardId: input.wardId,
-        workDate: workDateDate,
-        closesAt: { gt: new Date() },
-      },
-    });
-    if (active) {
-      throw new ConflictException("An attendance session is already active for this ward on that date");
-    }
+    // Serialize session creation per ward+date using a Postgres advisory lock
+    // so concurrent requests cannot both pass the active-session check below.
+    // (A partial unique index cannot use now(), which is not IMMUTABLE.)
+    const session = await this.prisma.client.$transaction(async (tx) => {
+      await tx.$executeRaw`SELECT pg_advisory_xact_lock(hashtext(${`session:${input.wardId}:${workDate}`}))`;
 
-    const opensAt = new Date();
-    const closesAt = new Date(opensAt.getTime() + input.durationMinutes * 60 * 1000);
-    const session = await this.prisma.client.attendanceSession.create({
-      data: {
-        token: sessionToken(),
-        wardId: input.wardId,
-        workDate: workDateDate,
-        activity: input.activity,
-        location: input.location,
-        opensAt,
-        closesAt,
-        createdBy: auth.userId,
-      },
+      const active = await tx.attendanceSession.findFirst({
+        where: {
+          wardId: input.wardId,
+          workDate: workDateDate,
+          closesAt: { gt: new Date() },
+        },
+      });
+      if (active) {
+        throw new ConflictException("An attendance session is already active for this ward on that date");
+      }
+
+      const opensAt = new Date();
+      const closesAt = new Date(opensAt.getTime() + input.durationMinutes * 60 * 1000);
+      return tx.attendanceSession.create({
+        data: {
+          token: sessionToken(),
+          wardId: input.wardId,
+          workDate: workDateDate,
+          activity: input.activity,
+          location: input.location,
+          opensAt,
+          closesAt,
+          createdBy: auth.userId,
+        },
+      });
     });
 
+    const closesAt = session.closesAt;
     await this.audit.record({
       action: "ATTENDANCE.SESSION_CREATED",
       targetType: "AttendanceSession",
@@ -153,9 +187,10 @@ export class AttendanceService {
       include: { ward: true },
       orderBy: { createdAt: "desc" },
     });
+    const canManage = auth.capabilities.includes("ATTENDANCE_MANAGE");
     return sessions.map((session) => ({
       id: session.id,
-      token: session.token,
+      token: canManage ? session.token : undefined,
       wardId: session.wardId,
       ward: { id: session.ward.id, code: session.ward.code, name: session.ward.name },
       workDate: session.workDate,
@@ -176,9 +211,10 @@ export class AttendanceService {
       throw new NotFoundException("Attendance session not found");
     }
     await this.sessionVisible(auth, session);
+    const canManage = auth.capabilities.includes("ATTENDANCE_MANAGE");
     return {
       id: session.id,
-      token: session.token,
+      token: canManage ? session.token : undefined,
       wardId: session.wardId,
       ward: { id: session.ward.id, code: session.ward.code, name: session.ward.name },
       workDate: session.workDate,
@@ -205,16 +241,9 @@ export class AttendanceService {
       throw new BadRequestException("This attendance session is not open. Contact your supervisor.");
     }
 
-    const employee = await this.prisma.client.employee.findFirst({
-      where: { employeeNumber: input.employeeNumber },
-      include: { assignments: true },
-    });
-    const belongsToWard =
-      employee !== null &&
-      (employee.wardId === session.wardId ||
-        employee.assignments.some((assignment) => !assignment.endedAt && assignment.wardId === session.wardId));
+    const employee = await this.findCheckInEmployee(input.employeeNumber, session.wardId);
 
-    if (!employee || !employee.active || !belongsToWard) {
+    if (!employee) {
       this.throttle.recordFailure(key);
       await this.audit.record({
         action: "ATTENDANCE.CHECKIN_FAILED",

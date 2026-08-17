@@ -1,6 +1,10 @@
 import { Controller, Get, HttpException, HttpStatus } from "@nestjs/common";
+import { Public } from "../common/public.decorator";
 import { HealthService } from "./health.service";
 
+// Liveness/readiness probes are reachable without an authenticated session so
+// orchestrators and load balancers can query them.
+@Public()
 @Controller("health")
 export class HealthController {
   constructor(private readonly health: HealthService) {}

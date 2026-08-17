@@ -196,4 +196,81 @@ describe("access requests (integration)", () => {
     });
     expect(outOfScope.statusCode).toBe(403);
   });
+
+  it("does not leak subcounty-scoped requests across counties", async () => {
+    const admin = await bootstrapAdmin(app);
+    const likoni = await prisma.subcounty.findUniqueOrThrow({ where: { code: "LIKONI" } });
+
+    await api(app, {
+      method: "POST",
+      url: "/api/v1/users/access-requests",
+      payload: {
+        displayName: "Mombasa Applicant",
+        email: "mombasa.applicant@makina.test",
+        password: REQUEST_PASSWORD,
+        reason: "Field staff for Likoni",
+        requestedScope: "SUBCOUNTY",
+        requestedScopeId: likoni.id,
+      },
+    });
+
+    const list = await api(app, {
+      method: "GET",
+      url: "/api/v1/users/access-requests",
+      cookie: admin.cookie,
+    });
+    const emails = list.json().requests.map((request: { email: string }) => request.email);
+    expect(emails).not.toContain("mombasa.applicant@makina.test");
+  });
+
+  it("forces a password change before other endpoints are usable", async () => {
+    const admin = await bootstrapAdmin(app);
+    const created = await api(app, {
+      method: "POST",
+      url: "/api/v1/users/access-requests",
+      payload: {
+        displayName: "New Officer",
+        email: "new.officer@makina.test",
+        password: REQUEST_PASSWORD,
+        reason: "Field staff for Makina",
+        requestedScope: "WARD",
+        requestedScopeId: makinaWard.id,
+      },
+    });
+    const requestId = created.json().id as string;
+
+    await api(app, {
+      method: "POST",
+      url: `/api/v1/users/access-requests/${requestId}/review`,
+      cookie: admin.cookie,
+      csrf: admin.csrf,
+      payload: { action: "approve", roleCode: "WARD_OFFICER", scopeType: "WARD", scopeId: makinaWard.id },
+    });
+
+    const session = await login(app, "new.officer@makina.test", REQUEST_PASSWORD);
+    expect(session.user?.mustChangePassword).toBe(true);
+
+    const blocked = await api(app, {
+      method: "GET",
+      url: "/api/v1/staff",
+      cookie: session.cookie,
+    });
+    expect(blocked.statusCode).toBe(403);
+
+    const changed = await api(app, {
+      method: "POST",
+      url: "/api/v1/auth/change-password",
+      cookie: session.cookie,
+      csrf: session.csrf,
+      payload: { currentPassword: REQUEST_PASSWORD, newPassword: "OfficerPass-123456" },
+    });
+    expect(changed.statusCode).toBe(200);
+
+    const allowed = await api(app, {
+      method: "GET",
+      url: "/api/v1/staff",
+      cookie: session.cookie,
+    });
+    expect(allowed.statusCode).toBe(200);
+  });
 });

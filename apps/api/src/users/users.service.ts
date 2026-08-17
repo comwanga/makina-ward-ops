@@ -85,22 +85,34 @@ export class UsersService {
     const requests = await this.prisma.client.accessRequest.findMany({
       orderBy: { createdAt: "desc" },
     });
+
+    const subcountyIds = requests
+      .filter((request) => request.requestedScope === "SUBCOUNTY" && request.requestedScopeId)
+      .map((request) => request.requestedScopeId as string);
+    const subcounties = await this.prisma.client.subcounty.findMany({
+      where: { id: { in: subcountyIds } },
+      select: { id: true, countyId: true },
+    });
+    const subcountyToCounty = new Map(subcounties.map((subcounty) => [subcounty.id, subcounty.countyId]));
+
     return requests
       .filter((request) => {
         if (!request.requestedScope || !request.requestedScopeId) return true;
-        if (request.requestedScope === "WARD") return accessibleWards.has(request.requestedScopeId);
+        const scopeId = request.requestedScopeId;
+        if (request.requestedScope === "WARD") return accessibleWards.has(scopeId);
         if (request.requestedScope === "SUBCOUNTY") {
           return auth.assignments.some(
             (assignment) =>
               (assignment.scopeType === "SUBCOUNTY" &&
-                assignment.subcountyId === request.requestedScopeId) ||
+                assignment.subcountyId === scopeId) ||
               (assignment.scopeType === "COUNTY" &&
-                assignment.countyId !== null),
+                assignment.countyId !== null &&
+                subcountyToCounty.get(scopeId) === assignment.countyId),
           );
         }
         return auth.assignments.some(
           (assignment) =>
-            assignment.scopeType === "COUNTY" && assignment.countyId === request.requestedScopeId,
+            assignment.scopeType === "COUNTY" && assignment.countyId === scopeId,
         );
       })
       .map((request) => ({

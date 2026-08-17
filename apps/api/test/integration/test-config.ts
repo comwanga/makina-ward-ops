@@ -6,7 +6,6 @@ export function testConfig(databaseUrl: string): AppConfig {
     port: 0,
     databaseUrl,
     publicBaseUrl: "http://localhost:3000",
-    sessionSecret: "test-only-secret-test-only-secret-test-only",
     sessionHours: 12,
     secureCookies: false,
     storage: {
