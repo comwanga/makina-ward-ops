@@ -1,5 +1,7 @@
 # Makina Ward Operations
 
+> **Status (Aug 2026):** This repository is being rebuilt per [`projectredefine.md`](projectredefine.md). The legacy FastAPI application described below remains the behavioral reference. The new platform is a pnpm monorepo — `apps/web` (Next.js), `apps/api` (NestJS + Fastify), `packages/{contracts,validation,database}` (Prisma/PostgreSQL) — with design and migration docs under [`docs/`](docs/) and container definitions under [`infrastructure/`](infrastructure/). Phase 0 (analysis) and Phase 1 (foundation) are complete. Branding assets live in [`branding/`](branding/).
+
 Makina Ward Operations is a mobile-first workforce attendance and environment reporting system for Makina Ward, Kibra Sub County. It combines QR attendance, staff records, leave and sick-off evidence, field work documentation, report generation, controlled AI assistance, and an appraisal-ready report archive.
 
 > The `NCC` seal included in the interface is a placeholder. Replace it only with an officially approved Nairobi City County logo and branding asset.

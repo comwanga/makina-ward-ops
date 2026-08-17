@@ -1,0 +1,17 @@
+{
+  "name": "Makina Ward Operations",
+  "short_name": "Ward Ops",
+  "description": "Multi-ward staff attendance and environment operations reporting",
+  "start_url": "/",
+  "display": "standalone",
+  "background_color": "#f4f2e9",
+  "theme_color": "#143d2b",
+  "icons": [
+    {
+      "src": "/branding/nairobi-city-county-logo.png",
+      "sizes": "320x320",
+      "type": "image/png",
+      "purpose": "any maskable"
+    }
+  ]
+}

@@ -1,0 +1,29 @@
+{
+  "name": "ward-ops",
+  "version": "0.1.0",
+  "private": true,
+  "description": "Multi-ward environment operations platform (Makina Ward -> Kibra Subcounty -> Nairobi City County)",
+  "packageManager": "pnpm@8.15.9",
+  "engines": {
+    "node": ">=20"
+  },
+  "scripts": {
+    "build": "pnpm -r build",
+    "lint": "eslint .",
+    "typecheck": "pnpm -r typecheck",
+    "test": "pnpm -r test",
+    "dev:web": "pnpm --filter @ward-ops/web dev",
+    "dev:api": "pnpm --filter @ward-ops/api start:dev",
+    "db:generate": "pnpm --filter @ward-ops/database db:generate",
+    "db:migrate": "pnpm --filter @ward-ops/database db:migrate",
+    "db:deploy": "pnpm --filter @ward-ops/database db:deploy",
+    "db:seed": "pnpm --filter @ward-ops/database db:seed"
+  },
+  "devDependencies": {
+    "@eslint/js": "^9.17.0",
+    "@types/node": "^22.10.2",
+    "eslint": "^9.17.0",
+    "typescript": "^5.7.2",
+    "typescript-eslint": "^8.18.1"
+  }
+}

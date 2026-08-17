@@ -1,0 +1,36 @@
+{
+  "name": "@ward-ops/api",
+  "version": "0.1.0",
+  "private": true,
+  "main": "./dist/main.js",
+  "scripts": {
+    "build": "tsc -p tsconfig.build.json",
+    "typecheck": "tsc -p tsconfig.json --noEmit",
+    "start": "node dist/main.js",
+    "start:dev": "tsx watch src/main.ts",
+    "test": "vitest run",
+    "test:watch": "vitest",
+    "test:integration": "pnpm build && vitest run --config vitest.integration.config.ts",
+    "lint": "echo \"(lint runs from workspace root)\""
+  },
+  "dependencies": {
+    "@fastify/cookie": "^9.4.0",
+    "@fastify/cors": "^9.0.1",
+    "@nestjs/common": "^10.4.15",
+    "@nestjs/core": "^10.4.15",
+    "@nestjs/platform-fastify": "^10.4.15",
+    "@ward-ops/contracts": "workspace:*",
+    "@ward-ops/database": "workspace:*",
+    "@ward-ops/validation": "workspace:*",
+    "fastify": "^4.28.1",
+    "reflect-metadata": "^0.2.2",
+    "rxjs": "^7.8.1",
+    "zod": "^3.23.8"
+  },
+  "devDependencies": {
+    "@nestjs/testing": "^10.4.15",
+    "tsx": "^4.19.2",
+    "typescript": "^5.7.2",
+    "vitest": "^2.1.8"
+  }
+}

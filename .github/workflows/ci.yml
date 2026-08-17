@@ -1,0 +1,95 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+jobs:
+  quality:
+    name: Lint / typecheck / test / build
+    runs-on: ubuntu-latest
+    env:
+      DATABASE_URL: postgresql://ci:ci@localhost:5432/ci
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: pnpm/action-setup@v4
+        with:
+          version: 8.15.9
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          cache: pnpm
+
+      - name: Install dependencies
+        run: pnpm install --frozen-lockfile
+
+      - name: Generate Prisma client
+        run: pnpm db:generate
+
+      - name: Lint
+        run: pnpm lint
+
+      - name: Build
+        run: pnpm build
+
+      - name: Typecheck
+        run: pnpm typecheck
+
+      - name: Test
+        run: pnpm test
+
+  integration:
+    name: Database migrations + seed
+    runs-on: ubuntu-latest
+    services:
+      postgres:
+        image: postgres:16-alpine
+        env:
+          POSTGRES_DB: ward_ops
+          POSTGRES_USER: ward_ops
+          POSTGRES_PASSWORD: ward_ops
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U ward_ops"
+          --health-interval 10s
+          --health-timeout 5s
+          --health-retries 5
+    env:
+      DATABASE_URL: postgresql://ward_ops:ward_ops@localhost:5432/ward_ops
+      TEST_DATABASE_URL: postgresql://ward_ops:ward_ops@localhost:5432/ward_ops
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: pnpm/action-setup@v4
+        with:
+          version: 8.15.9
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          cache: pnpm
+
+      - name: Install dependencies
+        run: pnpm install --frozen-lockfile
+
+      - name: Generate Prisma client
+        run: pnpm db:generate
+
+      - name: Apply migrations
+        run: pnpm --filter @ward-ops/database db:deploy
+
+      - name: Seed reference data
+        run: pnpm --filter @ward-ops/database db:seed
+
+      - name: Re-run seed (idempotency)
+        run: pnpm --filter @ward-ops/database db:seed
+
+      - name: Build workspace packages
+        run: pnpm --filter @ward-ops/contracts build && pnpm --filter @ward-ops/validation build && pnpm --filter @ward-ops/database build
+
+      - name: API integration tests (auth, tenancy, access requests)
+        run: pnpm --filter @ward-ops/api test:integration
