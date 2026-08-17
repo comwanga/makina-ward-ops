@@ -14,6 +14,7 @@
     "lint": "echo \"(lint runs from workspace root)\""
   },
   "dependencies": {
+    "@aws-sdk/client-s3": "^3",
     "@fastify/cookie": "^9.4.0",
     "@fastify/cors": "^9.0.1",
     "@fastify/multipart": "^8.3.1",
@@ -27,6 +28,7 @@
     "nodemailer": "^9.0.5",
     "reflect-metadata": "^0.2.2",
     "rxjs": "^7.8.1",
+    "sharp": "^0.33",
     "zod": "^3.23.8"
   },
   "devDependencies": {

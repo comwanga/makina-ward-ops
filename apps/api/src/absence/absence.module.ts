@@ -1,11 +1,11 @@
 import { Inject, Injectable, Module, OnApplicationBootstrap, OnModuleDestroy } from "@nestjs/common";
 import { AuthorizationModule } from "../authorization/authorization.module";
+import { StorageModule } from "../storage/storage.module";
 import { APP_CONFIG } from "../config/config.module";
 import type { AppConfig } from "../config/config";
 import { AbsenceService } from "./absence.service";
 import { AbsenceController } from "./absence.controller";
 import { AbsenceReminderService } from "./absence-reminder.service";
-import { DocumentStorage, LocalDocumentStorage } from "./document-storage.service";
 
 const REMINDER_INTERVAL_MS = 60 * 60 * 1000;
 
@@ -41,12 +41,11 @@ export class ReminderScheduler implements OnApplicationBootstrap, OnModuleDestro
 export const ABSENCE_REMINDER_SERVICE = "ABSENCE_REMINDER_SERVICE";
 
 @Module({
-  imports: [AuthorizationModule],
+  imports: [AuthorizationModule, StorageModule],
   providers: [
     AbsenceService,
     AbsenceReminderService,
     ReminderScheduler,
-    { provide: DocumentStorage, useClass: LocalDocumentStorage },
     { provide: ABSENCE_REMINDER_SERVICE, useExisting: AbsenceReminderService },
   ],
   controllers: [AbsenceController],

@@ -6,15 +6,22 @@ import { BrandLogo } from "@/components/BrandLogo";
 import {
   ApiError,
   CompletionStatus,
+  Evidence,
+  EvidenceStage,
   Ward,
   WorkLog,
   WorkLogAction,
   createWorkLog,
+  downloadEvidence,
   fetchMe,
+  listEvidence,
   listWards,
   listWorkLogs,
+  uploadEvidence,
   workLogAction,
 } from "@/lib/api";
+
+const STAGES: EvidenceStage[] = ["BEFORE", "DURING", "AFTER"];
 
 function nairobiToday(): string {
   return new Intl.DateTimeFormat("en-CA", {
@@ -38,6 +45,7 @@ export default function WorkLogsPage() {
   const [me, setMe] = useState<{ capabilities: string[] } | null>(null);
   const [workLogs, setWorkLogs] = useState<WorkLog[]>([]);
   const [wards, setWards] = useState<Ward[]>([]);
+  const [evidenceByWorkLog, setEvidenceByWorkLog] = useState<Record<string, Evidence[]>>({});
   const [error, setError] = useState<string | null>(null);
   const [notice, setNotice] = useState<string | null>(null);
   const [submitting, setSubmitting] = useState(false);
@@ -94,6 +102,37 @@ export default function WorkLogsPage() {
   useEffect(() => {
     void load();
   }, [load]);
+
+  async function loadEvidenceFor(workLogId: string) {
+    try {
+      const items = await listEvidence(workLogId);
+      setEvidenceByWorkLog((current) => ({ ...current, [workLogId]: items }));
+    } catch (err) {
+      setError(err instanceof ApiError ? err.message : "Unable to load evidence");
+    }
+  }
+
+  async function onUploadEvidence(workLog: WorkLog, file: File | null, stage: EvidenceStage) {
+    if (!file) return;
+    setError(null);
+    setNotice(null);
+    try {
+      await uploadEvidence(workLog.id, file, stage, "");
+      await loadEvidenceFor(workLog.id);
+    } catch (err) {
+      setError(err instanceof ApiError ? err.message : "Unable to upload photo");
+    }
+  }
+
+  async function onOpenEvidence(evidence: Evidence) {
+    setError(null);
+    try {
+      const blob = await downloadEvidence(evidence.id);
+      window.open(URL.createObjectURL(blob), "_blank");
+    } catch (err) {
+      setError(err instanceof ApiError ? err.message : "Unable to open photo");
+    }
+  }
 
   async function onCreate(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
@@ -358,6 +397,7 @@ export default function WorkLogsPage() {
                 <th>Location</th>
                 <th>Status</th>
                 <th>Completion</th>
+                <th>Evidence</th>
                 <th></th>
               </tr>
             </thead>
@@ -384,6 +424,16 @@ export default function WorkLogsPage() {
                       : "Complete"}
                   </td>
                   <td>
+                    {can("WORK_READ") && (
+                      <EvidenceCell
+                        evidence={evidenceByWorkLog[workLog.id] ?? []}
+                        canUpload={can("WORK_CREATE")}
+                        onOpen={onOpenEvidence}
+                        onUploaded={(file, stage) => void onUploadEvidence(workLog, file, stage)}
+                      />
+                    )}
+                  </td>
+                  <td>
                     <div className="doc-actions">
                       {actionsFor(workLog).map((item) => (
                         <button
@@ -403,5 +453,54 @@ export default function WorkLogsPage() {
         )}
       </section>
     </main>
+  );
+}
+
+function EvidenceCell({
+  evidence,
+  canUpload,
+  onOpen,
+  onUploaded,
+}: {
+  evidence: Evidence[];
+  canUpload: boolean;
+  onOpen: (evidence: Evidence) => void;
+  onUploaded: (file: File | null, stage: EvidenceStage) => void;
+}) {
+  return (
+    <div className="doc-list">
+      {STAGES.map((stage) => {
+        const items = evidence.filter((item) => item.stage === stage);
+        return (
+          <span key={stage} className="doc-stage">
+            <strong>{stage.toLowerCase()}</strong> ({items.length})
+            {items.map((item) => (
+              <a
+                key={item.id}
+                className="link-btn"
+                href="#"
+                onClick={(e) => {
+                  e.preventDefault();
+                  onOpen(item);
+                }}
+              >
+                view
+              </a>
+            ))}
+            {canUpload && (
+              <label className="link-btn">
+                + upload
+                <input
+                  type="file"
+                  accept="image/jpeg,image/png"
+                  className="visually-hidden"
+                  onChange={(e) => onUploaded(e.target.files?.[0] ?? null, stage)}
+                />
+              </label>
+            )}
+          </span>
+        );
+      })}
+    </div>
   );
 }

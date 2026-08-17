@@ -12,7 +12,7 @@ import { AuditService } from "../audit/audit.service";
 import { AuthContext } from "../auth/auth-context";
 import { ScopeService } from "../authorization/scope.service";
 import type { AbsenceActionInput, AbsenceQueryInput, CreateAbsenceInput, DocumentCategory } from "@ward-ops/validation";
-import { DocumentStorage, type DocumentFileInput, type StoredDocument } from "./document-storage.service";
+import { ObjectStorage, type StorageFileInput, type StoredObject } from "../storage/object-storage.service";
 import { nextAbsenceStatus } from "./absence-transitions";
 
 export interface RequestMeta {
@@ -81,7 +81,7 @@ export class AbsenceService {
     private readonly prisma: PrismaService,
     private readonly scope: ScopeService,
     private readonly audit: AuditService,
-    private readonly storage: DocumentStorage,
+    private readonly storage: ObjectStorage,
   ) {}
 
   // -- Helpers ----------------------------------------------------------------
@@ -314,7 +314,7 @@ export class AbsenceService {
   async uploadDocument(
     auth: AuthContext,
     absenceId: string,
-    file: DocumentFileInput,
+    file: StorageFileInput,
     category: DocumentCategory,
     meta: RequestMeta,
   ): Promise<{ id: string; originalName: string; contentType: string; size: number; category: string }> {
@@ -331,7 +331,7 @@ export class AbsenceService {
       throw new BadRequestException("Document must be a genuine PDF, JPG or PNG file");
     }
 
-    const stored: StoredDocument = await this.storage.save({
+    const stored: StoredObject = await this.storage.save({
       buffer: file.buffer,
       originalName: file.originalName,
       contentType,
