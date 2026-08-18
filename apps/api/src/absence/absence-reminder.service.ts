@@ -149,7 +149,7 @@ export class AbsenceReminderService {
         from: this.config.smtp.from,
         to: recipient,
         subject: `Leave application reminder: ${formatLongDate(startDate)}`,
-        text: `Dear ${fullName},\n\nYour planned leave begins in ${days} days. Please submit or confirm your leave application in good time.\n\nMakina Ward Environment Office`,
+        text: `Dear ${fullName},\n\nYour planned leave begins in ${days} days. Please submit or confirm your leave application in good time.\n\nMazingiraOps`,
       });
       return true;
     } catch (error) {

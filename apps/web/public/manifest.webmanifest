@@ -1,7 +1,7 @@
 {
-  "name": "Makina Ward Operations",
-  "short_name": "Ward Ops",
-  "description": "Multi-ward staff attendance and environment operations reporting",
+  "name": "MazingiraOps",
+  "short_name": "MazingiraOps",
+  "description": "Multi-ward environment operations reporting",
   "start_url": "/",
   "display": "standalone",
   "background_color": "#f4f2e9",

@@ -105,7 +105,7 @@ export default function AttendancePage() {
       <header className="dash-header">
         <BrandLogo size={44} />
         <div className="dash-title">
-          <p className="eyebrow">MAKINA WARD · ATTENDANCE</p>
+          <p className="eyebrow">MAZINGIRA OPS · ATTENDANCE</p>
           <h1>Attendance</h1>
         </div>
         <nav className="dash-nav">

@@ -34,7 +34,7 @@ export default function LoginPage() {
         <BrandLogo size={96} priority />
         <p className="eyebrow">NAIROBI CITY COUNTY</p>
         <h1>Sign in</h1>
-        <p className="subtitle">Makina Ward Environment Operations</p>
+        <p className="subtitle">Environment Operations Platform</p>
 
         <form className="auth-form" onSubmit={onSubmit}>
           <label htmlFor="email">Email</label>

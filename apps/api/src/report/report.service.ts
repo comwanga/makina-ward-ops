@@ -540,10 +540,10 @@ export class ReportService {
       actorUserId: auth.userId,
       sourceIp: meta.sourceIp,
       requestId: meta.requestId,
-      details: `makina-${report.kind.toLowerCase()}-${toDateOnly(report.periodStart)}.csv`,
+      details: `mazingira-${report.kind.toLowerCase()}-${toDateOnly(report.periodStart)}.csv`,
     });
 
-    const filename = `makina-${report.kind.toLowerCase()}-${toDateOnly(report.periodStart)}.csv`;
+    const filename = `mazingira-${report.kind.toLowerCase()}-${toDateOnly(report.periodStart)}.csv`;
     return { buffer: Buffer.from(`\ufeff${lines.join("\r\n")}\r\n`, "utf8"), filename };
   }
 }

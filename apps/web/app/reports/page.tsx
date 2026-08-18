@@ -204,7 +204,7 @@ export default function ReportsPage() {
       const blob = await downloadReportCsv(report.id);
       const link = document.createElement("a");
       link.href = URL.createObjectURL(blob);
-      link.download = `makina-${report.kind.toLowerCase()}-${report.periodStart}.csv`;
+      link.download = `mazingira-${report.kind.toLowerCase()}-${report.periodStart}.csv`;
       link.click();
     } catch (err) {
       setError(err instanceof ApiError ? err.message : "Unable to export report");
@@ -220,7 +220,7 @@ export default function ReportsPage() {
       <header className="dash-header">
         <BrandLogo size={44} />
         <div className="dash-title">
-          <p className="eyebrow">MAKINA WARD · REPORTS</p>
+          <p className="eyebrow">MAZINGIRA OPS · REPORTS</p>
           <h1>Reports</h1>
         </div>
         <nav className="dash-nav">

@@ -94,7 +94,7 @@ export default function StaffPage() {
       <header className="dash-header">
         <BrandLogo size={44} />
         <div className="dash-title">
-          <p className="eyebrow">MAKINA WARD · STAFF REGISTER</p>
+          <p className="eyebrow">MAZINGIRA OPS · STAFF REGISTER</p>
           <h1>Staff</h1>
         </div>
         <nav className="dash-nav">

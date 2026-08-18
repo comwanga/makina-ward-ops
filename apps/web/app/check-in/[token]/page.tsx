@@ -59,7 +59,7 @@ export default function CheckInPage({ params }: { params: Promise<{ token: strin
         <BrandLogo size={80} priority />
         <p className="eyebrow">NAIROBI CITY COUNTY</p>
         <h1>Attendance check-in</h1>
-        <p className="subtitle">Makina Ward Environment Operations</p>
+        <p className="subtitle">Environment Operations Platform</p>
 
         {result ? (
           <div className="checkin-result">

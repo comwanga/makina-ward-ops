@@ -1,6 +1,6 @@
-# Makina Ward Operations
+# MazingiraOps
 
-Multi-ward workforce attendance and environment operations reporting for Makina Ward → Kibra Subcounty → Nairobi City County. It combines QR attendance, staff records, leave and sick-off evidence, field work documentation, immutable report generation, controlled AI assistance, and an appraisal-ready report archive.
+Multi-ward environment operations platform, deployed first for Makina Ward → Kibra Subcounty → Nairobi City County. It combines QR attendance, staff records, leave and sick-off evidence, field work documentation, immutable report generation, controlled AI assistance, and an appraisal-ready report archive.
 
 This is a pnpm monorepo:
 
