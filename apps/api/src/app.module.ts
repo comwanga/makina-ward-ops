@@ -2,7 +2,7 @@ import { Module, NestModule, MiddlewareConsumer } from "@nestjs/common";
 import { ConfigModule } from "./config/config.module";
 import { PrismaModule } from "./prisma/prisma.module";
 import { HealthModule } from "./health/health.module";
-import { AuditModule } from "./audit/audit.service";
+import { AuditModule } from "./audit/audit.module";
 import { AuthModule } from "./auth/auth.module";
 import { AuthorizationModule } from "./authorization/authorization.module";
 import { UsersModule } from "./users/users.module";

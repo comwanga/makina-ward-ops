@@ -427,8 +427,12 @@ export class ReportService {
       input.recommendations?.trim() || deterministicRecommendations(snapshot.workLogs);
 
     // §8: the immutable snapshot is signed with the finalizer's name and role
-    // so a finalized report never depends on live user data.
-    const finalizingAssignment = auth.assignments[0];
+    // so a finalized report never depends on live user data. Prefer the
+    // highest-authority assignment so the signature is deterministic even when
+    // the user holds several assignments.
+    const finalizingAssignment =
+      auth.assignments.find((assignment) => assignment.role === "SYSTEM_ADMIN") ??
+      auth.assignments[0];
     const signedTitle =
       finalizingAssignment?.role === "SYSTEM_ADMIN"
         ? "Ward Environment Officer"

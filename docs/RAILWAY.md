@@ -22,8 +22,6 @@ S3_BUCKET=<your S3 bucket>
 S3_ACCESS_KEY_ID=<your S3 access key id>
 S3_SECRET_ACCESS_KEY=<your S3 secret access key>
 S3_REGION=<your bucket region>
-BOOTSTRAP_ADMIN_EMAIL=<your officer email>
-BOOTSTRAP_ADMIN_PASSWORD=<a unique random password of at least 20 characters>
 OWNER_SETUP_TOKEN=<a separate random one-time token of at least 32 characters>
 ```
 
@@ -39,7 +37,7 @@ For the web service set the build variable `NEXT_PUBLIC_API_URL` to the API base
 
 ## First-time setup
 
-After deployment, open `/setup` on the web domain, enter `OWNER_SETUP_TOKEN`, and create your permanent owner name, email and password. You are signed in automatically. Remove `OWNER_SETUP_TOKEN` from Railway after setup and redeploy. Existing installations can instead sign in once with the bootstrap account and change their email, name and password under **My account**.
+After deployment, open `/setup` on the web domain, enter `OWNER_SETUP_TOKEN`, and create your permanent owner name, email and password. When setup completes, sign in with the account you just created. Remove `OWNER_SETUP_TOKEN` from Railway after setup and redeploy.
 
 Visitors use `/register` to request benchmark access. They cannot sign in until the owner approves them under **User access**. Approved applicants receive the fixed `read_only` role and cannot perform officer or administrator changes.
 
@@ -78,8 +76,7 @@ The integration sends only the reporting period, attendance totals, and structur
 ## First deployment checks
 
 1. Open `/health/ready` on the api domain and confirm `{"status":"ready"}`.
-2. Open the web domain and confirm it loads and reaches the API (sign-in page renders and login works).
-3. Sign in with `BOOTSTRAP_ADMIN_EMAIL` and `BOOTSTRAP_ADMIN_PASSWORD`.
-4. Change the bootstrap password immediately.
-5. Generate an attendance QR and verify that its link uses the Railway or custom HTTPS domain.
-6. Upload and download a synthetic medical document, redeploy, and confirm the file remains available from S3.
+2. Open the web domain and confirm it loads and reaches the API (sign-in page renders).
+3. Open `/setup` on the web domain, complete owner setup with `OWNER_SETUP_TOKEN`, and sign in.
+4. Generate an attendance QR and verify that its link uses the Railway or custom HTTPS domain.
+5. Upload and download a synthetic medical document, redeploy, and confirm the file remains available from S3.

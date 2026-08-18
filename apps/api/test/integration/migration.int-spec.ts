@@ -24,7 +24,6 @@ function appConfig(documentStoreDir: string) {
     sessionHours: 12,
     secureCookies: false,
     storage: { region: "us-east-1", forcePathStyle: false, configured: false },
-    bootstrap: { email: "a@b.c", password: "x" },
     ownerSetupToken: "token",
     smtp: { port: 587, from: "x@y.z", configured: false },
     ai: { enabled: false, baseUrl: "", model: "" },

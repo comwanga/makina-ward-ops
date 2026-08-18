@@ -1,199 +1,106 @@
 # Makina Ward Operations
 
-> **Status (Aug 2026):** This repository is being rebuilt per [`projectredefine.md`](projectredefine.md). The legacy FastAPI application described below remains the behavioral reference. The new platform is a pnpm monorepo — `apps/web` (Next.js), `apps/api` (NestJS + Fastify), `packages/{contracts,validation,database}` (Prisma/PostgreSQL) — with design and migration docs under [`docs/`](docs/) and container definitions under [`infrastructure/`](infrastructure/). Phase 0 (analysis) and Phase 1 (foundation) are complete. Branding assets live in [`branding/`](branding/).
+Multi-ward workforce attendance and environment operations reporting for Makina Ward → Kibra Subcounty → Nairobi City County. It combines QR attendance, staff records, leave and sick-off evidence, field work documentation, immutable report generation, controlled AI assistance, and an appraisal-ready report archive.
 
-Makina Ward Operations is a mobile-first workforce attendance and environment reporting system for Makina Ward, Kibra Sub County. It combines QR attendance, staff records, leave and sick-off evidence, field work documentation, report generation, controlled AI assistance, and an appraisal-ready report archive.
+This is a pnpm monorepo:
 
-> The `NCC` seal included in the interface is a placeholder. Replace it only with an officially approved Nairobi City County logo and branding asset.
+| Workspace | Technology |
+| --- | --- |
+| `apps/web` | Next.js (App Router), React, TypeScript |
+| `apps/api` | NestJS + Fastify, TypeScript |
+| `packages/contracts` | shared domain enums and API contract types |
+| `packages/validation` | shared Zod schemas |
+| `packages/database` | Prisma schema, migrations, generated client, seed |
+
+Deployment definitions live under [`infrastructure/`](infrastructure/), design and ADR documentation under [`docs/`](docs/), and operational tooling under [`scripts/`](scripts/).
 
 ## Main Features
 
 ### Staff and access management
 
-- One-time system owner setup with a private Railway setup token.
-- Owner-controlled access requests with approval or rejection.
-- On approval the owner marks which areas each user can open (attendance, staff register, leave, daily work, reports, audit).
+- One-time system owner setup at `/setup` using a private `OWNER_SETUP_TOKEN`.
+- Visitor access requests at `/register`, approved or rejected by the owner under **User access**.
+- Owner-controlled access with scoped roles (system admin, ward officer, subcounty reviewer, HR viewer, read-only).
 - Read-only benchmark accounts cannot create, change, approve or export operational records.
-- The owner can revoke or restore an account's access at any time; revocation ends active sessions immediately.
-- Roles for system owners, ward officers, Sub County reviewers, HR viewers, and read-only visitors.
+- Revoke or restore an account at any time; revocation ends active sessions immediately.
 - Staff creation, correction, deactivation, and reactivation without deleting historical records.
-- Excel and CSV roster imports that update existing Employee IDs and add new staff.
+- Excel/CSV roster imports that update existing Employee IDs and add new staff.
 
 ### Attendance and leave
 
-- Expiring daily QR attendance sessions.
-- Employee verification using the exact 11-digit, year-prefixed Employee ID saved in the register; phone numbers are not used for check-in.
-- Duplicate check-in prevention, late classification, and optional GPS capture.
-- Supervised check-in for staff without suitable smartphones.
-- Audited manual exceptions for staff who remain absent after QR check-in, including confirmed absent and off-duty status.
-- Automatic present, absent, late, annual-leave, and sick-off tallies.
-- Date-based attendance and check-in history with daily staff report generation for any day of the year.
-- Planned leave schedules and 30-, 14-, and 7-day reminder processing.
+- Expiring daily QR attendance sessions with duplicate check-in prevention, late classification, and optional GPS capture.
+- Employee verification using the exact 11-digit, year-prefixed Employee ID.
+- Audited manual exceptions for staff who remain absent after QR check-in.
+- Date-based attendance and check-in history with daily staff report generation.
+- Planned leave schedules with 30-, 14-, and 7-day reminder processing.
 - Approval and rejection workflows for leave and sick-off records.
 - Private uploads for sick sheets, medical certificates, leave forms, approvals, and return-to-work forms.
 
-### Field operations
+### Field operations and reports
 
-- Daily work descriptions, areas or roads covered, trip counts, staff counts, and challenges.
-- Optional truck (`T-161`) and backhoe (`BH13`) identification for waste loading or transfer.
-- Cleanup exercise stakeholders and Climate Works team participation.
-- Separate complete and incomplete work status with outstanding-work notes.
-- Select up to four before, four during, and four after photos from a phone gallery or camera.
-- Daily reports include all field photos; weekly and monthly reports include a balanced sample.
+- Daily work descriptions, areas/roads, trip counts, staff counts, and challenges.
+- Up to four before, four during, and four after photos per work log.
 - Review and approval workflow before work appears in final reports.
-
-### Reports and AI
-
-- Daily, weekly, monthly, and custom reporting periods.
-- Attendance details, approved work, completion status, field photos, and recommendations.
-- Automatic report signature using the finaliser's account name and role.
-- Automatic generation date and time.
-- Immutable finalised reports retained in the report archive for appraisals and future reference.
+- Daily, weekly, monthly, and custom report periods with deterministic aggregation.
+- Immutable finalised reports retained for appraisals and future reference.
 - Print-to-PDF layout and Excel-compatible CSV export.
-- Optional Groq AI narrative drafting using `llama-3.1-8b-instant`.
-- Local deterministic report fallback when AI is disabled, unavailable, or rate-limited.
-
-The AI payload excludes employee names, employee IDs, phone numbers, attendance rows, medical information, work descriptions, and challenge notes. AI output remains a draft and must be reviewed before finalisation.
-
-## Staff Roster Format
-
-Upload an `.xlsx` workbook or UTF-8 `.csv` containing these required fields:
-
-```text
-Names | Phone Numbers | Pay Roll Numbers | Status | Residence
-```
-
-Common heading variations are accepted. The Employee ID value must contain exactly 11 digits and start with the four-digit year, for example `20230464669`.
-
-Supported roster statuses:
-
-```text
-ON DUTY
-ANNUAL LEAVE
-```
-
-Existing Employee IDs are updated and new IDs are added. Staff omitted from a later upload are not deleted automatically. Deactivate them from the staff register when necessary. Imported annual leave remains current until the record is changed back to on duty or a newer roster is uploaded.
+- Optional Groq AI narrative drafting with a local deterministic fallback.
 
 ## Technology
 
 | Layer | Technology |
-|---|---|
-| Application | FastAPI, Python 3.12, Jinja2 |
-| Data access | SQLAlchemy 2 |
-| Production database | PostgreSQL with Psycopg 3 |
-| Local database | SQLite |
-| Excel import | OpenPyXL |
-| AI | Groq OpenAI-compatible API, optional |
-| Deployment | Docker and Railway |
+| --- | --- |
+| Frontend | Next.js (App Router), React, TypeScript |
+| Backend | NestJS + Fastify, TypeScript |
+| Database | PostgreSQL via Prisma |
+| Validation | Zod (shared schemas) |
+| Object storage | S3-compatible (production) or local filesystem (dev/test) |
+| Auth | scrypt password hashing, server-side sessions, CSRF protection |
+| Deployment | Docker + Railway |
 
 ## Local Development
 
-Create an isolated environment and install development dependencies:
+Requires Node 24 and pnpm 8.15.9, plus a PostgreSQL server.
 
 ```bash
-python3 -m venv .venv
-.venv/bin/pip install -r requirements-dev.txt
-.venv/bin/uvicorn app.main:app --reload
+pnpm install
+pnpm db:generate
+cp .env.example .env   # then fill in DATABASE_URL etc.
+pnpm db:migrate        # or pnpm db:deploy against an existing database
+pnpm db:seed
+pnpm dev:api           # NestJS API on :4000
+pnpm dev:web           # Next.js web on :3000
 ```
 
-Open `http://127.0.0.1:8000`.
+Open `http://localhost:3000`. First-time setup runs at `/setup` using the value of `OWNER_SETUP_TOKEN`.
 
-Do not reuse development credentials in production. Supply your own local values when testing account setup:
+## Environment Variables
 
-```bash
-export BOOTSTRAP_ADMIN_EMAIL="local-owner@example.test"
-export BOOTSTRAP_ADMIN_PASSWORD="<choose-a-local-password>"
-export OWNER_SETUP_TOKEN="<generate-a-separate-random-token>"
+See [`.env.example`](.env.example) for the complete list. Key variables:
+
+```text
+APP_ENV=development
+DATABASE_URL=postgresql://ward_ops:ward_ops@localhost:5432/ward_ops
+OWNER_SETUP_TOKEN=<random one-time token for /setup>
+S3_BUCKET=             # required in production, along with S3_ACCESS_KEY_ID / S3_SECRET_ACCESS_KEY
+SECURE_COOKIES=true    # required in production
 ```
 
-If Ubuntu does not provide `python3-venv`, dependencies can be installed into a local ignored directory:
-
-```bash
-python3 -m pip install --target .packages --break-system-packages -r requirements-dev.txt
-PYTHONPATH=.packages python3 -m uvicorn app.main:app --reload
-```
+Production refuses to start without `SECURE_COOKIES=true` and complete S3 configuration, so evidence is never silently written to the container filesystem.
 
 ## Tests
 
 ```bash
-PYTHONPATH=.packages python3 -m pytest -q
+pnpm lint
+pnpm typecheck
+pnpm test              # unit tests
+TEST_DATABASE_URL=postgresql://ward_ops:ward_ops@localhost:5432/ward_ops_test \
+  pnpm --filter @ward-ops/api test:integration   # integration tests (requires PostgreSQL)
 ```
 
 ## Railway Deployment
 
-The repository includes `railway.json` and a production `Dockerfile`. Railway should use the Dockerfile command; leave the Railway custom Start Command empty.
-
-Required application variables:
-
-```text
-APP_ENV=production
-DATABASE_URL=<reference the Railway PostgreSQL DATABASE_URL>
-SECURE_COOKIES=true
-OWNER_SETUP_TOKEN=<one-time random owner setup token>
-DOCUMENT_ROOT=/app/data/documents
-```
-
-Railway provides `PORT` and `RAILWAY_PUBLIC_DOMAIN` automatically. Do not create them manually.
-
-After the first owner setup:
-
-1. Open `/setup` on the deployed domain.
-2. Create the permanent owner account.
-3. Remove `OWNER_SETUP_TOKEN` from Railway.
-4. Redeploy the application.
-
-Attach a persistent Railway volume to:
-
-```text
-/app/data/documents
-```
-
-Scanned forms and field photos will be lost during redeployment if this volume is not attached.
-
-Optional SMTP variables:
-
-```text
-SMTP_HOST=<approved SMTP host>
-SMTP_PORT=587
-SMTP_USERNAME=<SMTP username>
-SMTP_PASSWORD=<SMTP password>
-SMTP_FROM=<approved sender address>
-```
-
-Optional Groq AI variables:
-
-```text
-AI_ENABLED=true
-AI_BASE_URL=https://api.groq.com/openai/v1
-AI_API_KEY=<Groq API key>
-AI_MODEL=llama-3.1-8b-instant
-```
-
-Enter Railway values without quotation marks. Never place actual passwords, database URLs, setup tokens, SMTP credentials, or API keys in GitHub.
-
-See [Railway deployment instructions](docs/RAILWAY.md) for the complete setup.
-
-## Security and Privacy
-
-- Server-side sessions, secure cookies, CSRF protection, and role checks protect administrative actions.
-- QR check-in verification attempts are rate-limited.
-- Sensitive uploads are stored outside public static files.
-- Medical files are restricted to authorised HR and owner roles.
-- Operational changes, approvals, downloads, exports, and access decisions are audited.
-- Finalised report snapshots are retained independently of later source-record edits.
-- Spreadsheet values are escaped during CSV exports to reduce formula-injection risk.
-
-Before entering real personnel or medical data:
-
-- Complete a Kenya Data Protection Act impact assessment.
-- Approve data retention and deletion periods.
-- Configure encrypted PostgreSQL and document-volume backups.
-- Test database and file restoration.
-- Add malware scanning or approved scanned private object storage.
-- Confirm official branding, report templates, attendance rules, and approval authority.
-- Use county SSO and MFA when they become available.
-
-If a real credential has ever been committed or shared publicly, removing it from a file is not sufficient. Revoke and rotate it immediately.
+See [docs/RAILWAY.md](docs/RAILWAY.md) for the complete deployment and first-run checklist.
 
 ## Health Checks
 
@@ -202,13 +109,29 @@ GET /health/live
 GET /health/ready
 ```
 
-Readiness verifies database connectivity and writable private document storage.
+Readiness verifies database connectivity and object-storage reachability.
+
+## Security and Privacy
+
+- Server-side sessions, secure cookies, CSRF protection, and capability-scoped authorization.
+- Default-deny tenant isolation enforced server-side across staff, attendance, absence, work logs, evidence, and reports.
+- QR check-in verification attempts and login attempts are rate-limited.
+- Sensitive uploads are stored in private object storage and served only through authorized routes.
+- Medical files are restricted to authorised HR/owner roles.
+- Operational changes, approvals, downloads, exports, and access decisions are audited.
+- Finalised report snapshots are retained independently of later source-record edits.
+- Spreadsheet values are escaped during CSV exports to reduce formula-injection risk.
+
+Before entering real personnel or medical data, complete a Kenya Data Protection Act impact assessment, approve retention periods, configure encrypted backups, and confirm official branding and attendance rules.
 
 ## Documentation
 
-- [Implementation plan](docs/IMPLEMENTATION_PLAN.md)
+- [Architecture](docs/ARCHITECTURE.md)
+- [Authorization model](docs/AUTHORIZATION_MODEL.md)
+- [Domain model](docs/DOMAIN_MODEL.md)
 - [Operations guide](docs/OPERATIONS.md)
 - [Railway deployment](docs/RAILWAY.md)
+- [ADRs](docs/adr/)
 
 ## License
 

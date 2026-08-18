@@ -38,11 +38,20 @@ describe("RequestLoggingMiddleware", () => {
   });
 
   it("skips health readiness paths", () => {
-    const req = makeReq("/api/v1/health/ready");
+    const req = makeReq("/health/ready");
     const res = makeRes();
     const next = vi.fn();
     middleware.use(req, res as ServerResponse, next);
     expect(next).toHaveBeenCalledTimes(1);
+    res.emit("finish");
+    expect(logSpy).not.toHaveBeenCalled();
+  });
+
+  it("skips health liveness paths", () => {
+    const req = makeReq("/health/live");
+    const res = makeRes();
+    const next = vi.fn();
+    middleware.use(req, res as ServerResponse, next);
     res.emit("finish");
     expect(logSpy).not.toHaveBeenCalled();
   });
