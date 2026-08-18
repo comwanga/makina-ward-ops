@@ -10,6 +10,16 @@ import type { AppConfig } from "../config/config";
 const REMINDER_OFFSETS = [30, 14, 7];
 const HOUR_MS = 60 * 60 * 1000;
 
+/** Redacts an email address for logging (e.g. a***@example.com). */
+function redactEmail(email: string): string {
+  const at = email.indexOf("@");
+  if (at <= 0) return "***";
+  const local = email.slice(0, at);
+  const domain = email.slice(at + 1);
+  const first = local[0] ?? "";
+  return `${first}***@${domain}`;
+}
+
 function todayNairobi(): string {
   return new Intl.DateTimeFormat("en-CA", {
     timeZone: "Africa/Nairobi",
@@ -143,7 +153,7 @@ export class AbsenceReminderService {
       });
       return true;
     } catch (error) {
-      this.logger.error(`Reminder send failed for ${recipient}: ${String(error)}`);
+      this.logger.error(`Reminder send failed for ${redactEmail(recipient)}: ${String(error)}`);
       return false;
     }
   }
