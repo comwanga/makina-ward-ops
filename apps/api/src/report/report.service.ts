@@ -354,19 +354,52 @@ export class ReportService {
   }
 
   async list(auth: AuthContext, query: ReportQueryInput): Promise<Array<Record<string, unknown>>> {
+    const { wardIds, subcountyIds, countyIds } = await this.scope.accessibleScopeIds(auth);
     const reports = await this.prisma.client.report.findMany({
-      include: { evidence: true },
       orderBy: { createdAt: "desc" },
+      select: {
+        id: true,
+        kind: true,
+        scopeType: true,
+        scopeId: true,
+        periodStart: true,
+        periodEnd: true,
+        status: true,
+        title: true,
+        version: true,
+        finalizedBy: true,
+        finalizedAt: true,
+        createdBy: true,
+        createdAt: true,
+      },
     });
     const accessible: Array<Record<string, unknown>> = [];
     for (const report of reports) {
-      if (await this.scope.scopeAccessible(auth, report.scopeType, report.scopeId)) {
-        const summary = this.toSummary(report);
-        if (query.scopeType && summary.scopeType !== query.scopeType) continue;
-        if (query.scopeId && summary.scopeId !== query.scopeId) continue;
-        if (query.kind && summary.kind !== query.kind) continue;
-        accessible.push(summary);
-      }
+      const inScope =
+        report.scopeType === "WARD"
+          ? wardIds.has(report.scopeId)
+          : report.scopeType === "SUBCOUNTY"
+            ? subcountyIds.has(report.scopeId)
+            : countyIds.has(report.scopeId);
+      if (!inScope) continue;
+      if (query.scopeType && report.scopeType !== query.scopeType) continue;
+      if (query.scopeId && report.scopeId !== query.scopeId) continue;
+      if (query.kind && report.kind !== query.kind) continue;
+      accessible.push({
+        id: report.id,
+        kind: report.kind,
+        scopeType: report.scopeType,
+        scopeId: report.scopeId,
+        periodStart: toDateOnly(report.periodStart),
+        periodEnd: toDateOnly(report.periodEnd),
+        status: report.status,
+        title: report.title,
+        version: report.version,
+        finalizedBy: report.finalizedBy,
+        finalizedAt: report.finalizedAt,
+        createdBy: report.createdBy,
+        createdAt: report.createdAt,
+      });
     }
     const startIndex = (query.page - 1) * query.pageSize;
     return accessible.slice(startIndex, startIndex + query.pageSize);

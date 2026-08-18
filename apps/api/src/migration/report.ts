@@ -45,6 +45,7 @@ export interface MigrationReport {
   counts: TableCounts;
   files: FileMigrationRecord[];
   reconciliation: ReconciliationReport;
+  unreferencedLegacyFiles: string[];
   notes: string[];
   success: boolean;
 }

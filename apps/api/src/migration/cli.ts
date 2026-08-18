@@ -66,6 +66,7 @@ async function main(): Promise<void> {
     console.log(`Migration report written to ${reportPath}`);
     for (const line of migrator.summarize()) console.log(`  ${line}`);
     console.log(`Reconciliation: ${report.reconciliation.objectsWithoutMetadata.length} orphan objects, ${report.reconciliation.metadataWithoutObject.length} orphan metadata rows`);
+    console.log(`Unreferenced legacy files (on disk, no DB metadata): ${report.unreferencedLegacyFiles.length}`);
     console.log(report.success ? "Migration succeeded." : "Migration completed with failures (see report).");
   } finally {
     await prisma.$disconnect();

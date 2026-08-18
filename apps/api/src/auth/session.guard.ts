@@ -41,6 +41,7 @@ export class SessionAuthGuard implements CanActivate {
                   },
                 },
               },
+              capabilities: { include: { capability: true } },
             },
           },
         },
@@ -59,11 +60,12 @@ export class SessionAuthGuard implements CanActivate {
           sessionId: session.id,
           csrfToken: session.csrfToken,
           capabilities: Array.from(
-            new Set(
-              session.user.assignments.flatMap((assignment) =>
+            new Set([
+              ...session.user.assignments.flatMap((assignment) =>
                 assignment.role.capabilities.map((link) => link.capability.code as AuthContext["capabilities"][number]),
               ),
-            ),
+              ...session.user.capabilities.map((link) => link.capability.code as AuthContext["capabilities"][number]),
+            ]),
           ),
           assignments: session.user.assignments.map((assignment) => ({
             id: assignment.id,

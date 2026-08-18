@@ -149,6 +149,12 @@ describe("report aggregation (§25, §26, ADR-0007)", () => {
       expect(escapeCsvCell("@cmd")).toBe("'@cmd");
     });
 
+    it("neutralizes formula-injection cells preceded by whitespace", () => {
+      expect(escapeCsvCell(" =SUM(A1:A2)")).toBe("' =SUM(A1:A2)");
+      expect(escapeCsvCell("\t+1+2")).toBe("'\t+1+2");
+      expect(escapeCsvCell("  @cmd")).toBe("'  @cmd");
+    });
+
     it("leaves ordinary values untouched", () => {
       expect(escapeCsvCell("Makina")).toBe("Makina");
       expect(escapeCsvCell(42)).toBe("42");

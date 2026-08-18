@@ -1,5 +1,5 @@
 import { createHash } from "node:crypto";
-import { access, readFile } from "node:fs/promises";
+import { access, readdir, readFile } from "node:fs/promises";
 import path from "node:path";
 import type { ObjectStorage, StorageFileInput } from "../storage/object-storage.service";
 import type { FileMigrationRecord } from "./report";
@@ -12,6 +12,30 @@ export interface LegacyFile {
   contentType: string;
   sizeBytes: number;
   sha256: string;
+}
+
+/**
+ * Lists legacy filesystem files (in the legacy document root) that are not
+ * referenced by any legacy database row. These are surfaced in the migration
+ * report for human investigation — never fabricated, never given a relationship.
+ */
+export async function listUnreferencedLegacyFiles(
+  legacyDocRoot: string,
+  referencedKeys: ReadonlySet<string>,
+): Promise<string[]> {
+  const referencedNames = new Set(
+    [...referencedKeys].map((key) => path.basename(key)),
+  );
+  let entries: string[];
+  try {
+    entries = await readdir(legacyDocRoot);
+  } catch {
+    return [];
+  }
+  return entries
+    .filter((name) => name !== ".gitkeep")
+    .filter((name) => !referencedNames.has(name))
+    .sort();
 }
 
 /**

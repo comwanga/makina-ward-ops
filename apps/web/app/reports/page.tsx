@@ -10,6 +10,7 @@ import {
   ReportKind,
   ReportPreview,
   ReportScopeType,
+  ReportSummary,
   downloadReportCsv,
   draftReportNarrative,
   fetchMe,
@@ -67,7 +68,7 @@ export default function ReportsPage() {
   const router = useRouter();
   const [me, setMe] = useState<{ capabilities: string[] } | null>(null);
   const [scopes, setScopes] = useState<ScopeOption[]>([]);
-  const [reports, setReports] = useState<Report[]>([]);
+  const [reports, setReports] = useState<ReportSummary[]>([]);
   const [selected, setSelected] = useState<Report | null>(null);
   const [preview, setPreview] = useState<ReportPreview | null>(null);
   const [error, setError] = useState<string | null>(null);
@@ -188,7 +189,7 @@ export default function ReportsPage() {
     }
   }
 
-  async function onOpen(report: Report) {
+  async function onOpen(report: ReportSummary) {
     setError(null);
     try {
       setSelected(await fetchReport(report.id));
@@ -197,7 +198,7 @@ export default function ReportsPage() {
     }
   }
 
-  async function onCsv(report: Report) {
+  async function onCsv(report: ReportSummary) {
     setError(null);
     try {
       const blob = await downloadReportCsv(report.id);

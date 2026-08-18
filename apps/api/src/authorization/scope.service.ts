@@ -64,6 +64,12 @@ export interface WardSummary {
   subcountyId: string;
 }
 
+export interface AccessibleScopeIds {
+  wardIds: Set<string>;
+  subcountyIds: Set<string>;
+  countyIds: Set<string>;
+}
+
 @Injectable()
 export class ScopeService {
   constructor(private readonly prisma: PrismaService) {}
@@ -141,6 +147,35 @@ export class ScopeService {
         name: ward.name,
         subcountyId: ward.subcountyId,
       }));
+  }
+
+  /**
+   * Precomputes the set of ward/subcounty/county ids the user can access, so
+   * callers (e.g. report listing) can filter in memory without one query per
+   * resource. A WARD assignment grants ward access only (not the containing
+   * subcounty/county); a SUBCOUNTY assignment grants that subcounty and its
+   * wards; a COUNTY assignment grants the county, its subcounties and wards.
+   */
+  async accessibleScopeIds(auth: AuthContext): Promise<AccessibleScopeIds> {
+    const countyIds = new Set<string>();
+    const subcountyIds = new Set<string>();
+    for (const assignment of auth.assignments) {
+      if (assignment.scopeType === "COUNTY" && assignment.countyId) {
+        countyIds.add(assignment.countyId);
+      } else if (assignment.scopeType === "SUBCOUNTY" && assignment.subcountyId) {
+        subcountyIds.add(assignment.subcountyId);
+      }
+    }
+    if (countyIds.size > 0) {
+      const subcounties = await this.prisma.client.subcounty.findMany({
+        where: { countyId: { in: [...countyIds] } },
+        select: { id: true },
+      });
+      for (const subcounty of subcounties) subcountyIds.add(subcounty.id);
+    }
+    const wards = await this.accessibleWards(auth);
+    const wardIds = new Set(wards.map((ward) => ward.id));
+    return { wardIds, subcountyIds, countyIds };
   }
 
   async organisationTree(auth: AuthContext): Promise<Array<{
