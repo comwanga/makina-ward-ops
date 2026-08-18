@@ -673,6 +673,22 @@ export interface Report {
   evidence: ReportEvidenceRef[];
 }
 
+export interface ReportSummary {
+  id: string;
+  kind: ReportKind;
+  scopeType: ReportScopeType;
+  scopeId: string;
+  periodStart: string;
+  periodEnd: string;
+  status: ReportStatus;
+  title: string;
+  version: number;
+  finalizedBy: string | null;
+  finalizedAt: string | null;
+  createdBy: string;
+  createdAt: string;
+}
+
 export interface ReportPreview {
   snapshot: ReportSnapshot;
   narrative: string;
@@ -721,13 +737,13 @@ export async function listReports(query?: {
   scopeType?: ReportScopeType;
   scopeId?: string;
   kind?: ReportKind;
-}): Promise<Report[]> {
+}): Promise<ReportSummary[]> {
   const params = new URLSearchParams();
   if (query?.scopeType) params.set("scopeType", query.scopeType);
   if (query?.scopeId) params.set("scopeId", query.scopeId);
   if (query?.kind) params.set("kind", query.kind);
   const suffix = params.toString() ? `?${params.toString()}` : "";
-  return apiFetch<Report[]>(`/reports${suffix}`);
+  return apiFetch<ReportSummary[]>(`/reports${suffix}`);
 }
 
 export async function fetchReport(id: string): Promise<Report> {

@@ -187,13 +187,14 @@ export function deterministicRecommendations(
 }
 
 /**
- * §8 / §12: CSV formula-injection protection. Cells beginning with =, +, - or @
- * are prefixed with a single quote; cells containing commas, quotes or newlines
- * are double-quoted with doubled inner quotes.
+ * §8 / §12: CSV formula-injection protection. Cells whose first non-whitespace
+ * character is =, +, - or @ are prefixed with a single quote (so leading
+ * whitespace cannot bypass the guard); cells containing commas, quotes or
+ * newlines are double-quoted with doubled inner quotes.
  */
 export function escapeCsvCell(value: unknown): string {
   let text = value == null ? "" : String(value);
-  if (/^[=+\-@]/.test(text)) text = `'${text}`;
+  if (/^\s*[=+\-@]/.test(text)) text = `'${text}`;
   if (/[",\n\r]/.test(text)) text = `"${text.replace(/"/g, '""')}"`;
   return text;
 }

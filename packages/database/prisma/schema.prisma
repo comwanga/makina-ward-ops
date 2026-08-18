@@ -197,6 +197,7 @@ model User {
   sessions           UserSession[]
   assignments        Assignment[]
   auditEvents        AuditEvent[]   @relation("AuditActor")
+  capabilities       UserCapability[]
 }
 
 model Role {
@@ -208,10 +209,11 @@ model Role {
 }
 
 model Capability {
-  id    String           @id @default(cuid())
-  code  CapabilityCode   @unique
-  name  String
-  roles RoleCapability[]
+  id              String           @id @default(cuid())
+  code            CapabilityCode   @unique
+  name            String
+  roles           RoleCapability[]
+  userCapabilities UserCapability[]
 }
 
 model RoleCapability {
@@ -221,6 +223,18 @@ model RoleCapability {
   capability   Capability @relation(fields: [capabilityId], references: [id], onDelete: Cascade)
 
   @@id([roleId, capabilityId])
+}
+
+// Per-user capability grants (used by migration for legacy read-only accounts
+// whose CSV permission list must not mutate the shared READ_ONLY role).
+model UserCapability {
+  userId       String
+  capabilityId String
+  user         User       @relation(fields: [userId], references: [id], onDelete: Cascade)
+  capability   Capability @relation(fields: [capabilityId], references: [id], onDelete: Cascade)
+
+  @@id([userId, capabilityId])
+  @@index([capabilityId])
 }
 
 model Assignment {
@@ -570,4 +584,21 @@ model AuditEvent {
   @@index([occurredAt])
   @@index([action])
   @@index([actorUserId])
+}
+
+// ---------------------------------------------------------------------------
+// Legacy migration bookkeeping (Phase 9)
+// ---------------------------------------------------------------------------
+
+// Maps a legacy source record (sourceTable + legacyId) to its new record id so
+// migration can be re-run safely without duplicating evidence/documents/reports.
+model LegacyMigration {
+  id          String   @id @default(cuid())
+  sourceTable String
+  legacyId    String
+  newId       String
+  createdAt   DateTime @default(now())
+
+  @@unique([sourceTable, legacyId])
+  @@index([sourceTable])
 }

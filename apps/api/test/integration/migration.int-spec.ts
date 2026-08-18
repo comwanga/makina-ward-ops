@@ -37,17 +37,20 @@ describe("legacy database migration (integration)", () => {
   const prisma = new PrismaClient();
   let workDir: string;
   let legacyRoot: string;
+  let storageRoot: string;
   let storage: LocalObjectStorage;
 
   beforeAll(async () => {
     workDir = await mkdtemp(path.join(os.tmpdir(), "migrate-int-"));
     legacyRoot = path.join(workDir, "legacy");
+    storageRoot = path.join(workDir, "storage");
     await mkdir(legacyRoot);
-    storage = new LocalObjectStorage(appConfig(path.join(workDir, "storage")) as never);
+    storage = new LocalObjectStorage(appConfig(storageRoot) as never);
   });
 
   beforeEach(async () => {
     await cleanupMigratedData();
+    await rm(storageRoot, { recursive: true, force: true });
   });
 
   afterAll(async () => {
@@ -76,6 +79,8 @@ describe("legacy database migration (integration)", () => {
       prisma.userSession.deleteMany(),
       prisma.accessRequest.deleteMany(),
       prisma.auditEvent.deleteMany(),
+      prisma.userCapability.deleteMany(),
+      prisma.legacyMigration.deleteMany(),
       prisma.user.deleteMany(),
     ]);
   }
@@ -303,5 +308,147 @@ describe("legacy database migration (integration)", () => {
     expect(await prisma.evidence.count()).toBe(0);
     const records = report.files.filter((f) => f.legacyTable === "work_photos");
     expect(records[0].outcome).toBe("MISSING_FILE");
+  });
+
+  it("is idempotent: a re-run does not duplicate migrated records or objects", async () => {
+    const { DatabaseSync } = require("node:sqlite") as typeof import("node:sqlite");
+    const dbPath = path.join(workDir, "rerun.db");
+    const db = new DatabaseSync(dbPath);
+
+    const photo = "rerun-photo";
+    const doc = "rerun-doc";
+    await writeFile(path.join(legacyRoot, photo), photo);
+    await writeFile(path.join(legacyRoot, doc), doc);
+
+    const snapshot = JSON.stringify({
+      work_logs: [
+        {
+          id: 1,
+          activity: "Market clean-up",
+          completion_status: "complete",
+          photos: [{ id: 1, stage: "before", caption: "Before", sha256: sha256Hex(photo) }],
+        },
+      ],
+    });
+
+    db.exec(`
+      CREATE TABLE users (id INTEGER PRIMARY KEY, email TEXT, display_name TEXT, password_hash TEXT, role TEXT, permissions TEXT, active INTEGER, must_change_password INTEGER, created_at TEXT);
+      CREATE TABLE employees (id INTEGER PRIMARY KEY, employee_number TEXT, full_name TEXT, phone TEXT, email TEXT, role TEXT, active INTEGER);
+      CREATE TABLE work_logs (id INTEGER PRIMARY KEY, work_date TEXT, activity TEXT, location TEXT, description TEXT, quantity REAL, unit TEXT, staff_count INTEGER, challenges TEXT, status TEXT, submitted_by INTEGER, reviewed_by INTEGER, review_note TEXT, created_at TEXT, reviewed_at TEXT);
+      CREATE TABLE work_log_details (id INTEGER PRIMARY KEY, work_log_id INTEGER, completion_status TEXT, outstanding_work TEXT);
+      CREATE TABLE work_log_operations (id INTEGER PRIMARY KEY, work_log_id INTEGER, areas_roads TEXT, number_of_trips INTEGER, waste_transfer_involved INTEGER, truck_id TEXT, backhoe_id TEXT, cleanup_done INTEGER, cleanup_stakeholders TEXT, climate_team_count INTEGER);
+      CREATE TABLE work_photos (id INTEGER PRIMARY KEY, work_log_id INTEGER, storage_key TEXT, original_filename TEXT, content_type TEXT, size_bytes INTEGER, sha256 TEXT, caption TEXT, uploaded_by INTEGER, uploaded_at TEXT);
+      CREATE TABLE work_photo_stages (id INTEGER PRIMARY KEY, photo_id INTEGER, stage TEXT);
+      CREATE TABLE documents (id INTEGER PRIMARY KEY, absence_request_id INTEGER, storage_key TEXT, original_filename TEXT, content_type TEXT, size_bytes INTEGER, sha256 TEXT, sensitivity TEXT, uploaded_by INTEGER, uploaded_at TEXT);
+      CREATE TABLE report_records (id INTEGER PRIMARY KEY, kind TEXT, start_date TEXT, end_date TEXT, status TEXT, title TEXT, narrative TEXT, snapshot_json TEXT, created_by INTEGER, created_at TEXT);
+
+      INSERT INTO users VALUES (1, 'admin@rerun.legacy', 'System Admin', 'scrypt$x', 'system_admin', NULL, 1, 0, '2026-08-01 08:00:00');
+      INSERT INTO employees VALUES (1, 'NCC-2001', 'Rerun Staff', '0722000001', NULL, 'Team Leader', 1);
+      INSERT INTO work_logs VALUES (1, '2026-08-10', 'Market clean-up', 'Makina Market', 'desc', NULL, NULL, 5, NULL, 'approved', 1, NULL, NULL, '2026-08-10 18:00:00', NULL);
+      INSERT INTO work_log_details VALUES (1, 1, 'complete', NULL);
+      INSERT INTO work_log_operations VALUES (1, 1, 'Market', 2, 0, NULL, NULL, 0, NULL, 0);
+      INSERT INTO work_photos VALUES (1, 1, '${photo}', 'photo.jpg', 'image/jpeg', ${photo.length}, '${sha256Hex(photo)}', 'Before', 1, '2026-08-10 18:00:00');
+      INSERT INTO work_photo_stages VALUES (1, 1, 'before');
+      INSERT INTO documents VALUES (1, NULL, '${doc}', 'doc.pdf', 'application/pdf', ${doc.length}, '${sha256Hex(doc)}', 'general', 1, '2026-08-10 18:00:00');
+      INSERT INTO report_records VALUES (1, 'daily', '2026-08-10', '2026-08-10', 'finalized', 'Daily', 'narrative', '${snapshot}', 1, '2026-08-10 19:00:00');
+    `);
+    db.close();
+
+    const options = { prisma, storage, legacyDb: dbPath, legacyDocRoot: legacyRoot };
+    const first = await new LegacyMigrator(options, readLegacyDatabase(dbPath)).run(dbPath);
+    expect(first.success).toBe(true);
+
+    const expected = {
+      users: await prisma.user.count(),
+      employees: await prisma.employee.count(),
+      workLogs: await prisma.workLog.count(),
+      evidence: await prisma.evidence.count(),
+      documents: await prisma.document.count(),
+      reports: await prisma.report.count(),
+      reportEvidence: await prisma.reportEvidence.count(),
+      objects: (await storage.list()).length,
+    };
+    expect(expected.evidence).toBe(1);
+    expect(expected.documents).toBe(1);
+    expect(expected.reports).toBe(1);
+
+    const second = await new LegacyMigrator(options, readLegacyDatabase(dbPath)).run(dbPath);
+    expect(second.success).toBe(true);
+
+    expect(await prisma.user.count()).toBe(expected.users);
+    expect(await prisma.employee.count()).toBe(expected.employees);
+    expect(await prisma.workLog.count()).toBe(expected.workLogs);
+    expect(await prisma.evidence.count()).toBe(expected.evidence);
+    expect(await prisma.document.count()).toBe(expected.documents);
+    expect(await prisma.report.count()).toBe(expected.reports);
+    expect(await prisma.reportEvidence.count()).toBe(expected.reportEvidence);
+    expect((await storage.list()).length).toBe(expected.objects);
+    expect(second.reconciliation.objectsWithoutMetadata).toHaveLength(0);
+    expect(second.reconciliation.metadataWithoutObject).toHaveLength(0);
+  });
+
+  it("reports unreferenced legacy files without fabricating metadata", async () => {
+    const { DatabaseSync } = require("node:sqlite") as typeof import("node:sqlite");
+    const dbPath = path.join(workDir, "orphans.db");
+    const db = new DatabaseSync(dbPath);
+    db.exec(`
+      CREATE TABLE users (id INTEGER PRIMARY KEY, email TEXT, display_name TEXT, password_hash TEXT, role TEXT, permissions TEXT, active INTEGER, must_change_password INTEGER, created_at TEXT);
+      INSERT INTO users VALUES (1, 'admin@makina.legacy', 'System Admin', 'scrypt$x', 'system_admin', NULL, 1, 0, '2026-08-01 08:00:00');
+    `);
+    db.close();
+
+    // A legacy file on disk with no matching DB row.
+    await writeFile(path.join(legacyRoot, "orphan-file"), "unreferenced bytes");
+
+    const report = await new LegacyMigrator(
+      { prisma, storage, legacyDb: dbPath, legacyDocRoot: legacyRoot },
+      readLegacyDatabase(dbPath),
+    ).run(dbPath);
+
+    expect(report.unreferencedLegacyFiles).toContain("orphan-file");
+  });
+
+  it("grants read-only capabilities per user without mutating the shared role", async () => {
+    const { DatabaseSync } = require("node:sqlite") as typeof import("node:sqlite");
+    const dbPath = path.join(workDir, "readonly.db");
+    const db = new DatabaseSync(dbPath);
+    db.exec(`
+      CREATE TABLE users (id INTEGER PRIMARY KEY, email TEXT, display_name TEXT, password_hash TEXT, role TEXT, permissions TEXT, active INTEGER, must_change_password INTEGER, created_at TEXT);
+      INSERT INTO users VALUES
+        (1, 'admin@makina.legacy', 'System Admin', 'scrypt$x', 'system_admin', NULL, 1, 0, '2026-08-01 08:00:00'),
+        (2, 'audit.ro@makina.legacy', 'Audit Read Only', 'scrypt$y', 'read_only', 'audit,reports', 1, 0, '2026-08-01 08:00:00'),
+        (3, 'plain.ro@makina.legacy', 'Plain Read Only', 'scrypt$z', 'read_only', 'reports', 1, 0, '2026-08-01 08:00:00');
+    `);
+    db.close();
+
+    const report = await new LegacyMigrator(
+      { prisma, storage, legacyDb: dbPath, legacyDocRoot: legacyRoot },
+      readLegacyDatabase(dbPath),
+    ).run(dbPath);
+    expect(report.success).toBe(true);
+
+    const sharedRole = await prisma.role.findUniqueOrThrow({
+      where: { code: "READ_ONLY" },
+      include: { capabilities: { include: { capability: true } } },
+    });
+    const sharedCodes = sharedRole.capabilities.map((c) => c.capability.code);
+    expect(sharedCodes).not.toContain("AUDIT_READ");
+
+    const auditUser = await prisma.user.findUniqueOrThrow({
+      where: { email: "audit.ro@makina.legacy" },
+      include: { capabilities: { include: { capability: true } } },
+    });
+    expect(auditUser.capabilities.map((c) => c.capability.code)).toContain("AUDIT_READ");
+
+    const plainUser = await prisma.user.findUniqueOrThrow({
+      where: { email: "plain.ro@makina.legacy" },
+      include: { capabilities: { include: { capability: true } } },
+    });
+    expect(plainUser.capabilities.map((c) => c.capability.code)).not.toContain("AUDIT_READ");
+
+    const auditAssignment = await prisma.assignment.findFirstOrThrow({
+      where: { userId: auditUser.id },
+    });
+    expect(auditAssignment.scopeType).toBe("WARD");
   });
 });

@@ -145,15 +145,16 @@ export interface RoleAssignment {
 
 /**
  * Legacy users.role → initial Assignment (MIGRATION_PLAN §2). All legacy data
- * is single-ward (Makina); read_only accounts map to the default county scope
- * since the legacy approval only recorded a permission area, not a tenant.
+ * is single-ward (Makina); read_only accounts map to the Makina ward scope
+ * (the only permission area that existed in the legacy single-ward system) so
+ * migration never broadens a legacy account to the whole county.
  */
 export const ROLE_ASSIGNMENT_MAP: Record<string, RoleAssignment> = {
   system_admin: { role: "SYSTEM_ADMIN", scopeType: "COUNTY", scopeCode: "NCC" },
   ward_officer: { role: "WARD_OFFICER", scopeType: "WARD", scopeCode: "MAKINA" },
   subcounty_reviewer: { role: "SUBCOUNTY_REVIEWER", scopeType: "SUBCOUNTY", scopeCode: "KIBRA" },
   hr_viewer: { role: "HR_VIEWER", scopeType: "SUBCOUNTY", scopeCode: "KIBRA" },
-  read_only: { role: "READ_ONLY", scopeType: "COUNTY", scopeCode: "NCC" },
+  read_only: { role: "READ_ONLY", scopeType: "WARD", scopeCode: "MAKINA" },
 };
 export const DEFAULT_ROLE_ASSIGNMENT: RoleAssignment = {
   role: "READ_ONLY",
