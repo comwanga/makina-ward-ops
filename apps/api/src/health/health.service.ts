@@ -1,4 +1,4 @@
-import { Inject, Injectable } from "@nestjs/common";
+import { Inject, Injectable, Logger } from "@nestjs/common";
 import { PrismaService } from "../prisma/prisma.service";
 import { APP_CONFIG } from "../config/config.module";
 import type { AppConfig } from "../config/config";
@@ -11,6 +11,8 @@ export interface HealthCheckResult {
 
 @Injectable()
 export class HealthService {
+  private readonly logger = new Logger("Health");
+
   constructor(
     private readonly prisma: PrismaService,
     private readonly storage: ObjectStorage,
@@ -22,7 +24,10 @@ export class HealthService {
     try {
       await this.prisma.ping();
       database = "up";
-    } catch {
+    } catch (error) {
+      // Log the reason so a failing readiness probe is diagnosable from
+      // deployment logs (e.g. Railway) without exposing secrets.
+      this.logger.error(`Database readiness probe failed: ${String(error)}`);
       database = "down";
     }
 
@@ -34,7 +39,8 @@ export class HealthService {
       try {
         await this.storage.ping();
         storage = "up";
-      } catch {
+      } catch (error) {
+        this.logger.error(`Storage readiness probe failed: ${String(error)}`);
         storage = "down";
       }
     }

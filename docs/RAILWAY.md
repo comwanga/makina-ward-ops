@@ -33,6 +33,8 @@ Railway supplies `RAILWAY_PUBLIC_DOMAIN` after a public domain is generated for 
 PUBLIC_BASE_URL=https://your-approved-domain.example.go.ke
 ```
 
+The S3 credential must allow at least `s3:PutObject`, `s3:GetObject`, `s3:DeleteObject` and `s3:ListBucket` on the bucket. `s3:ListBucket` is required by both evidence reconciliation and the `/health/ready` storage probe, so a credential that only allows object operations will keep the deployment unhealthy.
+
 For the web service set the build variable `NEXT_PUBLIC_API_URL` to the API base URL, e.g. `https://<api-railway-domain>/api/v1`. The default (`http://localhost:4000/api/v1`) is only correct for local development.
 
 ## First-time setup

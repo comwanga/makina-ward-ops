@@ -5,7 +5,6 @@ import path from "node:path";
 import {
   DeleteObjectCommand,
   GetObjectCommand,
-  HeadBucketCommand,
   ListObjectsV2Command,
   PutObjectCommand,
   S3Client,
@@ -233,8 +232,11 @@ export class S3ObjectStorage extends ObjectStorage {
   }
 
   async ping(): Promise<void> {
-    // HeadBucket verifies the bucket exists and the credentials can access it
-    // without reading or writing any object (safe for a readiness probe).
-    await this.client.send(new HeadBucketCommand({ Bucket: this.bucket }));
+    // Probe with ListObjectsV2(MaxKeys:1) rather than HeadBucket: it uses the
+    // same s3:ListBucket permission the reconciliation list() method already
+    // requires, and has no head-object quirks. It never reads or writes data.
+    await this.client.send(
+      new ListObjectsV2Command({ Bucket: this.bucket, Prefix: `${this.prefix}/`, MaxKeys: 1 }),
+    );
   }
 }
