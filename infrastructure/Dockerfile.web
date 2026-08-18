@@ -1,5 +1,5 @@
 # Multi-stage build for the Next.js web app (standalone output).
-FROM node:20-bookworm-slim AS build
+FROM node:24-bookworm-slim AS build
 RUN corepack enable && corepack prepare pnpm@8.15.9 --activate
 WORKDIR /app
 
@@ -7,17 +7,22 @@ COPY . .
 RUN pnpm install --frozen-lockfile
 
 ENV DATABASE_URL=postgresql://build:build@localhost:5432/build
+# NEXT_PUBLIC_* values are inlined at build time; point the browser bundle at
+# the API base URL so the production web app can reach the API.
+ARG NEXT_PUBLIC_API_URL=http://localhost:4000/api/v1
+ENV NEXT_PUBLIC_API_URL=$NEXT_PUBLIC_API_URL
 RUN pnpm db:generate \
   && pnpm --filter @ward-ops/contracts build \
   && pnpm --filter @ward-ops/validation build \
   && pnpm --filter @ward-ops/web build
 
-FROM node:20-bookworm-slim AS runtime
+FROM node:24-bookworm-slim AS runtime
 RUN corepack enable \
   && apt-get update \
   && apt-get install -y --no-install-recommends openssl \
   && rm -rf /var/lib/apt/lists/*
 ENV NODE_ENV=production
+ENV APP_ENV=production
 WORKDIR /app
 COPY --from=build /app ./
 USER node

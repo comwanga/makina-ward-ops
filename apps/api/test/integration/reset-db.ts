@@ -16,20 +16,43 @@ export async function resetDatabase(databaseUrl: string): Promise<void> {
     env: { ...process.env, DATABASE_URL: databaseUrl },
     stdio: "inherit",
   });
-  execSync("pnpm --filter @ward-ops/database db:seed", {
-    cwd: REPO_ROOT,
-    env: { ...process.env, DATABASE_URL: databaseUrl },
-    stdio: "inherit",
-  });
 
   const prisma = new PrismaClient();
   try {
     await prisma.$transaction([
+      prisma.legacyMigration.deleteMany(),
+      prisma.reportEvidence.deleteMany(),
+      prisma.evidence.deleteMany(),
+      prisma.report.deleteMany(),
+      prisma.reminderDelivery.deleteMany(),
+      prisma.workLogOperations.deleteMany(),
+      prisma.workLogDetail.deleteMany(),
+      prisma.workLog.deleteMany(),
+      prisma.attendance.deleteMany(),
+      prisma.attendanceSession.deleteMany(),
+      prisma.absenceRequest.deleteMany(),
+      prisma.documentClassification.deleteMany(),
+      prisma.document.deleteMany(),
+      prisma.employeeAssignment.deleteMany(),
+      prisma.employeeProfile.deleteMany(),
+      prisma.employee.deleteMany(),
+      prisma.assignment.deleteMany(),
+      prisma.userCapability.deleteMany(),
+      prisma.roleCapability.deleteMany(),
       prisma.userSession.deleteMany(),
-      prisma.auditEvent.deleteMany(),
       prisma.accessRequest.deleteMany(),
+      prisma.auditEvent.deleteMany(),
       prisma.user.deleteMany(),
     ]);
+
+    // Reference data (capabilities, roles, role capabilities, county ->
+    // subcounty -> ward) is rebuilt after the deletes so a fresh, complete
+    // dataset is guaranteed.
+    execSync("pnpm --filter @ward-ops/database db:seed", {
+      cwd: REPO_ROOT,
+      env: { ...process.env, DATABASE_URL: databaseUrl },
+      stdio: "inherit",
+    });
 
     const ncc = await prisma.county.findUniqueOrThrow({ where: { code: "NCC" } });
 

@@ -40,6 +40,11 @@ export abstract class ObjectStorage {
    * detect objects that have no database metadata.
    */
   abstract list(): Promise<string[]>;
+  /**
+   * Connectivity probe used by the readiness endpoint. Resolves when the
+   * backing store is reachable and usable; rejects otherwise.
+   */
+  abstract ping(): Promise<void>;
 }
 
 const LOCAL_KEY_PATTERN = /^[0-9a-f]{48}$/;
@@ -102,6 +107,13 @@ export class LocalObjectStorage extends ObjectStorage {
     } catch {
       return [];
     }
+  }
+
+  async ping(): Promise<void> {
+    // Resolves only if the directory exists and is readable; rejects on
+    // permission or filesystem errors so readiness can report storage down.
+    await mkdir(this.root, { recursive: true });
+    await readdir(this.root);
   }
 }
 
@@ -217,5 +229,14 @@ export class S3ObjectStorage extends ObjectStorage {
       continuationToken = response.NextContinuationToken;
     } while (continuationToken);
     return keys.sort();
+  }
+
+  async ping(): Promise<void> {
+    // Probe with ListObjectsV2(MaxKeys:1) rather than HeadBucket: it uses the
+    // same s3:ListBucket permission the reconciliation list() method already
+    // requires, and has no head-object quirks. It never reads or writes data.
+    await this.client.send(
+      new ListObjectsV2Command({ Bucket: this.bucket, Prefix: `${this.prefix}/`, MaxKeys: 1 }),
+    );
   }
 }

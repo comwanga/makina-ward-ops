@@ -18,8 +18,28 @@ describe("HealthController", () => {
     });
   });
 
+  it("returns ready when database and object storage are up", async () => {
+    const health = { ready: vi.fn().mockResolvedValue({ database: "up", storage: "up" }) };
+    const controller = new HealthController(health as unknown as HealthService);
+    await expect(controller.ready()).resolves.toEqual({
+      status: "ready",
+      checks: { database: "up", storage: "up" },
+    });
+  });
+
   it("throws 503 when database is down", async () => {
     const health = { ready: vi.fn().mockResolvedValue({ database: "down", storage: "not_configured" }) };
+    const controller = new HealthController(health as unknown as HealthService);
+    await expect(controller.ready()).rejects.toBeInstanceOf(HttpException);
+    try {
+      await controller.ready();
+    } catch (error) {
+      expect((error as HttpException).getStatus()).toBe(503);
+    }
+  });
+
+  it("throws 503 when object storage is configured but down", async () => {
+    const health = { ready: vi.fn().mockResolvedValue({ database: "up", storage: "down" }) };
     const controller = new HealthController(health as unknown as HealthService);
     await expect(controller.ready()).rejects.toBeInstanceOf(HttpException);
     try {

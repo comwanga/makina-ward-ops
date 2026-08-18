@@ -18,7 +18,10 @@
     "db:migrate": "pnpm --filter @ward-ops/database db:migrate",
     "db:deploy": "pnpm --filter @ward-ops/database db:deploy",
     "db:seed": "pnpm --filter @ward-ops/database db:seed",
-    "db:migrate-legacy": "pnpm --filter @ward-ops/api migrate:legacy"
+    "db:migrate-legacy": "pnpm --filter @ward-ops/api migrate:legacy",
+    "backup": "bash scripts/backup.sh",
+    "restore": "bash scripts/restore.sh",
+    "recovery-drill": "bash scripts/recovery-drill.sh"
   },
   "devDependencies": {
     "@eslint/js": "^9.17.0",
