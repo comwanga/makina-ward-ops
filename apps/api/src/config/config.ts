@@ -15,8 +15,6 @@ const envSchema = z
     S3_ACCESS_KEY_ID: z.string().optional(),
     S3_SECRET_ACCESS_KEY: z.string().optional(),
     S3_FORCE_PATH_STYLE: z.string().optional(),
-    BOOTSTRAP_ADMIN_EMAIL: z.string().default("officer@makina.local"),
-    BOOTSTRAP_ADMIN_PASSWORD: z.string().default("ChangeMe123!"),
     OWNER_SETUP_TOKEN: z.string().optional(),
     SMTP_HOST: z.string().optional(),
     SMTP_PORT: z.coerce.number().int().default(587),
@@ -71,7 +69,6 @@ export interface AppConfig {
     forcePathStyle: boolean;
     configured: boolean;
   };
-  bootstrap: { email: string; password: string };
   ownerSetupToken?: string;
   smtp: {
     host?: string;
@@ -110,10 +107,6 @@ export function loadConfig(env: NodeJS.ProcessEnv = process.env): AppConfig {
       secretAccessKey: parsed.S3_SECRET_ACCESS_KEY,
       forcePathStyle: parsed.S3_FORCE_PATH_STYLE === "true" || parsed.S3_FORCE_PATH_STYLE === "1",
       configured: s3Configured,
-    },
-    bootstrap: {
-      email: parsed.BOOTSTRAP_ADMIN_EMAIL,
-      password: parsed.BOOTSTRAP_ADMIN_PASSWORD,
     },
     ownerSetupToken: parsed.OWNER_SETUP_TOKEN,
     smtp: {

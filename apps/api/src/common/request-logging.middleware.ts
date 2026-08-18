@@ -3,7 +3,7 @@ import type { IncomingMessage, ServerResponse } from "node:http";
 
 const REQUEST_ID_HEADER = "x-request-id";
 
-const SKIP_PATHS = new Set(["/api/v1/health/live", "/api/v1/health/ready", "/api/v1/health"]);
+const SKIP_PATHS = new Set(["/health/live", "/health/ready", "/health"]);
 
 /**
  * Structured, PII-safe access log. Records method, path, status and duration

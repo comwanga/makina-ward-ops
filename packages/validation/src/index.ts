@@ -6,3 +6,4 @@ export * from "./absence";
 export * from "./work-log";
 export * from "./evidence";
 export * from "./report";
+export * from "./audit";

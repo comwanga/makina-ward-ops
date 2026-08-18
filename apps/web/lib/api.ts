@@ -1,3 +1,29 @@
+import type {
+  AbsenceAction,
+  AbsenceKind,
+  AbsenceStatus,
+  CompletionStatus,
+  EvidenceStage,
+  ReportKind,
+  ReportStatus,
+  ScopeType,
+  WorkLogAction,
+  WorkLogStatus,
+} from "@ward-ops/contracts";
+
+export type {
+  AbsenceAction,
+  AbsenceKind,
+  AbsenceStatus,
+  CompletionStatus,
+  EvidenceStage,
+  ReportKind,
+  ReportStatus,
+  WorkLogAction,
+  WorkLogStatus,
+};
+export type ReportScopeType = ScopeType;
+
 export const API_URL =
   process.env.NEXT_PUBLIC_API_URL ?? "http://localhost:4000/api/v1";
 
@@ -120,6 +146,54 @@ export async function requestAccess(input: {
     method: "POST",
     body: input,
   });
+}
+
+export async function bootstrapOwner(input: {
+  setupToken: string;
+  email: string;
+  password: string;
+  displayName?: string;
+}): Promise<AuthUser> {
+  const result = await apiFetch<{ user: AuthUser }>("/auth/bootstrap", {
+    method: "POST",
+    body: input,
+  });
+  return result.user;
+}
+
+// -- Audit --------------------------------------------------------------------
+
+export interface AuditEvent {
+  id: string;
+  occurredAt: string;
+  actorUserId: string | null;
+  action: string;
+  targetType: string;
+  targetId: string | null;
+  scopeType: string | null;
+  scopeId: string | null;
+  details: string | null;
+  sourceIp: string | null;
+}
+
+export interface AuditListResult {
+  items: AuditEvent[];
+  page: number;
+  pageSize: number;
+  total: number;
+}
+
+export async function listAudit(query?: {
+  page?: number;
+  pageSize?: number;
+  action?: string;
+}): Promise<AuditListResult> {
+  const params = new URLSearchParams();
+  if (query?.page !== undefined) params.set("page", String(query.page));
+  if (query?.pageSize !== undefined) params.set("pageSize", String(query.pageSize));
+  if (query?.action) params.set("action", query.action);
+  const suffix = params.toString() ? `?${params.toString()}` : "";
+  return apiFetch<AuditListResult>(`/audit${suffix}`);
 }
 
 // -- Phase 3: staff -----------------------------------------------------------
@@ -273,24 +347,6 @@ export async function checkInPublic(
 
 // -- Phase 4: absence management ---------------------------------------------
 
-export type AbsenceKind =
-  | "ANNUAL_LEAVE"
-  | "MATERNITY_LEAVE"
-  | "PATERNITY_LEAVE"
-  | "COMPASSIONATE_LEAVE"
-  | "SICK_OFF"
-  | "OFFICIAL_DUTY"
-  | "UNPAID_LEAVE";
-
-export type AbsenceStatus =
-  | "PLANNED"
-  | "SUBMITTED"
-  | "APPROVED"
-  | "REJECTED"
-  | "CANCELLED";
-
-export type AbsenceAction = "SUBMIT" | "APPROVE" | "REJECT" | "CANCEL";
-
 export interface AbsenceDocument {
   id: string;
   originalName: string;
@@ -399,10 +455,6 @@ export async function downloadAbsenceDocument(documentId: string): Promise<Blob>
   return response.blob();
 }
 
-export type WorkLogStatus = "SUBMITTED" | "APPROVED" | "REJECTED";
-export type WorkLogAction = "APPROVE" | "REJECT";
-export type CompletionStatus = "COMPLETE" | "INCOMPLETE";
-
 export interface WorkLogOperations {
   areasRoads: string;
   numberOfTrips: number;
@@ -486,8 +538,6 @@ export async function workLogAction(
   });
 }
 
-export type EvidenceStage = "BEFORE" | "DURING" | "AFTER";
-
 export interface Evidence {
   id: string;
   workLogId: string;
@@ -551,10 +601,6 @@ export async function downloadEvidence(evidenceId: string): Promise<Blob> {
 }
 
 // -- Phase 7: reports ---------------------------------------------------------
-
-export type ReportKind = "DAILY" | "WEEKLY" | "MONTHLY" | "CUSTOM";
-export type ReportStatus = "DRAFT" | "FINALIZED";
-export type ReportScopeType = "COUNTY" | "SUBCOUNTY" | "WARD";
 
 export interface OrganisationWard {
   id: string;

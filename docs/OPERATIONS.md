@@ -35,8 +35,9 @@ The application checks reminders at startup and hourly. It creates at most one d
 ## Backup
 
 - Back up PostgreSQL daily using the hosting provider's encrypted backup facility or `scripts/backup.sh`.
-- Back up the private document volume on the same retention schedule. The document volume is the object store backing evidence files; `scripts/backup.sh` writes both `db.dump` and `documents.tar.gz` into one timestamped directory.
-- Keep database and document backups aligned because document metadata (object keys) is stored in PostgreSQL. Always restore them together.
+- `scripts/backup.sh` writes `db.dump` (and, for local object storage, `documents.tar.gz`) into one timestamped directory.
+- When evidence is stored in S3-compatible object storage (production), `scripts/backup.sh` backs up the database only and warns that the object store must be protected separately. Configure S3 versioning, snapshots, or the provider's backup facility for the evidence bucket — do not rely on `scripts/backup.sh` for S3 evidence.
+- Keep database and object backups aligned because document metadata (object keys) is stored in PostgreSQL. Always restore them together.
 - Run the synthetic recovery drill before pilot launch and at least quarterly:
   `DATABASE_URL=<scratch-db-url> pnpm recovery-drill` — builds packages, seeds reference data, loads synthetic operational data, backs up, destroys the database, restores, and verifies the restored data and evidence object.
 
@@ -45,7 +46,7 @@ The application checks reminders at startup and hourly. It creates at most one d
 The object store holds evidence files (photos and scanned documents) that are immutable attachments to work logs and finalised reports.
 
 - **Retention**: evidence objects are retained indefinitely while the related work log or report remains in the system. Never delete evidence from the object store while its database rows exist, or report/evidence reads will fail.
-- **Backup**: the document volume is backed up on the same daily schedule as the database, via `scripts/backup.sh`. Copies must be encrypted at rest (S3 server-side encryption, or encrypted volume snapshots for local storage) and kept in a separate region/location from the primary store.
+- **Backup**: for local object storage, the document volume is backed up on the same daily schedule as the database, via `scripts/backup.sh`. For S3-backed storage, protect the bucket with versioning, snapshots, or the provider's backup facility on the same retention schedule. Copies must be encrypted at rest (S3 server-side encryption, or encrypted volume snapshots for local storage) and kept in a separate region/location from the primary store.
 - **Lifecycle**: for S3-backed storage, configure a bucket lifecycle rule to move objects older than 365 days to a cost-optimised storage class (e.g. Glacier Instant Retrieval); do not expire objects automatically — deletion is only ever manual and coordinated with database cleanup.
 - **Access**: bucket access is restricted to the API role via least-privilege policy; the bucket is private and objects are served only through the API's authenticated routes.
 

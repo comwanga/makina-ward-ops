@@ -13,10 +13,6 @@ export function testConfig(databaseUrl: string): AppConfig {
       forcePathStyle: false,
       configured: false,
     },
-    bootstrap: {
-      email: "admin@makina.test",
-      password: "AdminOnly-123",
-    },
     ownerSetupToken: "test-setup-token",
     smtp: {
       port: 587,
