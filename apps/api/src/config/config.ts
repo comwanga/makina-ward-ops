@@ -7,6 +7,7 @@ const envSchema = z
     PORT: z.coerce.number().int().positive().default(4000),
     DATABASE_URL: z.string().min(1, "DATABASE_URL is required"),
     PUBLIC_BASE_URL: z.string().url().optional(),
+    CORS_ORIGINS: z.string().optional(),
     SESSION_HOURS: z.coerce.number().int().positive().default(12),
     SECURE_COOKIES: z.string().optional(),
     S3_ENDPOINT: z.string().optional(),
@@ -58,6 +59,7 @@ export interface AppConfig {
   port: number;
   databaseUrl: string;
   publicBaseUrl: string;
+  corsOrigins: string[];
   sessionHours: number;
   secureCookies: boolean;
   storage: {
@@ -97,6 +99,10 @@ export function loadConfig(env: NodeJS.ProcessEnv = process.env): AppConfig {
     port: parsed.PORT,
     databaseUrl: parsed.DATABASE_URL,
     publicBaseUrl: parsed.PUBLIC_BASE_URL ?? "http://127.0.0.1:3000",
+    corsOrigins: (parsed.CORS_ORIGINS ?? "")
+      .split(",")
+      .map((origin) => origin.trim())
+      .filter(Boolean),
     sessionHours: parsed.SESSION_HOURS,
     secureCookies,
     storage: {

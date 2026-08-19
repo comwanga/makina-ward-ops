@@ -54,7 +54,11 @@ export async function configureApp(
   await app.register(fastifyCors as never, {
     origin:
       config.env === "production"
-        ? [config.publicBaseUrl, config.publicBaseUrl.replace(/\/$/, "")]
+        ? [
+            config.publicBaseUrl,
+            config.publicBaseUrl.replace(/\/$/, ""),
+            ...config.corsOrigins,
+          ]
         : true,
     credentials: true,
     methods: ["GET", "POST", "PUT", "PATCH", "DELETE", "OPTIONS"],
