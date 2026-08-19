@@ -19,7 +19,7 @@ export default function LoginPage() {
     setSubmitting(true);
     try {
       await login(email, password);
-      router.push("/");
+      router.push("/worklogs");
       router.refresh();
     } catch (err) {
       setError(err instanceof ApiError ? err.message : "Unable to sign in");
