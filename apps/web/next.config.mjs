@@ -1,4 +1,7 @@
 /** @type {import('next').NextConfig} */
+const apiUrl = process.env.NEXT_PUBLIC_API_URL ?? "http://localhost:4000/api/v1";
+const apiOrigin = new URL(apiUrl).origin;
+
 const nextConfig = {
   reactStrictMode: true,
   output: "standalone",
@@ -18,7 +21,7 @@ const nextConfig = {
           {
             key: "Content-Security-Policy",
             value:
-              "default-src 'self'; img-src 'self' data:; style-src 'self' 'unsafe-inline'; script-src 'self' 'unsafe-inline'; form-action 'self'; frame-ancestors 'none'",
+              `default-src 'self'; img-src 'self' data:; style-src 'self' 'unsafe-inline'; script-src 'self' 'unsafe-inline'; connect-src 'self' ${apiOrigin}; form-action 'self'; frame-ancestors 'none'`,
           },
         ],
       },
