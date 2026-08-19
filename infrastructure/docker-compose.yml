@@ -28,7 +28,7 @@ services:
       SECURE_COOKIES: "false"
       DOCUMENT_STORE_DIR: /app/data/objects
       SMTP_HOST: ${SMTP_HOST:-}
-      SMTP_FROM: ${SMTP_FROM:-makina-ward@example.go.ke}
+      SMTP_FROM: ${SMTP_FROM:-mazingira-ops@example.go.ke}
       AI_ENABLED: ${AI_ENABLED:-false}
       AI_API_KEY: ${AI_API_KEY:-}
     volumes:

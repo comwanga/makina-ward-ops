@@ -198,7 +198,7 @@ export default function AbsencesPage() {
       <header className="dash-header">
         <BrandLogo size={44} />
         <div className="dash-title">
-          <p className="eyebrow">MAKINA WARD · ABSENCE MANAGEMENT</p>
+          <p className="eyebrow">MAZINGIRA OPS · ABSENCE MANAGEMENT</p>
           <h1>Absences</h1>
         </div>
         <nav className="dash-nav">

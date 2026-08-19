@@ -193,7 +193,7 @@ export default function WorkLogsPage() {
       <header className="dash-header">
         <BrandLogo size={44} />
         <div className="dash-title">
-          <p className="eyebrow">MAKINA WARD · WORK OPERATIONS</p>
+          <p className="eyebrow">MAZINGIRA OPS · WORK OPERATIONS</p>
           <h1>Work logs</h1>
         </div>
         <nav className="dash-nav">

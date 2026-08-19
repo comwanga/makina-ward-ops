@@ -16,7 +16,7 @@ export function testConfig(databaseUrl: string): AppConfig {
     ownerSetupToken: "test-setup-token",
     smtp: {
       port: 587,
-      from: "makina-ward@example.go.ke",
+      from: "mazingira-ops@example.go.ke",
       configured: false,
     },
     ai: {

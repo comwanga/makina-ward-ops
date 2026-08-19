@@ -20,7 +20,7 @@ const envSchema = z
     SMTP_PORT: z.coerce.number().int().default(587),
     SMTP_USERNAME: z.string().optional(),
     SMTP_PASSWORD: z.string().optional(),
-    SMTP_FROM: z.string().default("makina-ward@example.go.ke"),
+    SMTP_FROM: z.string().default("mazingira-ops@example.go.ke"),
     AI_ENABLED: z.string().optional(),
     AI_BASE_URL: z.string().default("https://api.groq.com/openai/v1"),
     AI_API_KEY: z.string().optional(),

@@ -4,9 +4,9 @@ import { BRANDING } from "@/lib/branding";
 import "./globals.css";
 
 export const metadata: Metadata = {
-  title: "Makina Ward Operations",
+  title: "MazingiraOps",
   description:
-    "Multi-ward staff attendance and environment operations reporting",
+    "Multi-ward environment operations reporting",
   manifest: "/manifest.webmanifest",
 };
 
