@@ -3,6 +3,7 @@
 import { useCallback, useEffect, useState } from "react";
 import { useRouter } from "next/navigation";
 import { BrandLogo } from "@/components/BrandLogo";
+import { DashNav } from "@/components/DashNav";
 import { ApiError, AuditEvent, fetchMe, listAudit } from "@/lib/api";
 
 function formatWhen(value: string): string {
@@ -53,14 +54,7 @@ export default function AuditPage() {
           <p className="eyebrow">AUDIT HISTORY</p>
           <h1>Audit</h1>
         </div>
-        <nav className="dash-nav">
-          <a href="/">Home</a>
-          <a href="/staff">Staff</a>
-          <a href="/attendance">Attendance</a>
-          <a href="/absences">Absences</a>
-          <a href="/worklogs">Work logs</a>
-          <a href="/audit" aria-current="page">Audit</a>
-        </nav>
+        <DashNav />
       </header>
 
       <section className="panel">

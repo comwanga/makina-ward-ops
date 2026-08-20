@@ -3,6 +3,7 @@
 import { FormEvent, useCallback, useEffect, useState } from "react";
 import { useRouter } from "next/navigation";
 import { BrandLogo } from "@/components/BrandLogo";
+import { DashNav } from "@/components/DashNav";
 import {
   ApiError,
   OrganisationCounty,
@@ -223,14 +224,7 @@ export default function ReportsPage() {
           <p className="eyebrow">MAZINGIRA OPS · REPORTS</p>
           <h1>Reports</h1>
         </div>
-        <nav className="dash-nav">
-          <a href="/">Home</a>
-          <a href="/staff">Staff</a>
-          <a href="/attendance">Attendance</a>
-          <a href="/absences">Absences</a>
-          <a href="/worklogs">Work logs</a>
-          <a href="/reports" aria-current="page">Reports</a>
-        </nav>
+        <DashNav />
       </header>
 
       {error && <p className="form-error">{error}</p>}

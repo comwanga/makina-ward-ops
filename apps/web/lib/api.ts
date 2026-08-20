@@ -6,6 +6,7 @@ import type {
   EvidenceStage,
   ReportKind,
   ReportStatus,
+  RoleCode,
   ScopeType,
   WorkLogAction,
   WorkLogStatus,
@@ -19,6 +20,7 @@ export type {
   EvidenceStage,
   ReportKind,
   ReportStatus,
+  RoleCode,
   WorkLogAction,
   WorkLogStatus,
 };
@@ -144,6 +146,40 @@ export async function requestAccess(input: {
   await apiFetch("/users/access-requests", {
     method: "POST",
     body: input,
+  });
+}
+
+export interface AccessRequest {
+  id: string;
+  displayName: string;
+  email: string;
+  reason: string;
+  status: "PENDING" | "APPROVED" | "REJECTED";
+  requestedScope: string | null;
+  requestedScopeId: string | null;
+  createdAt: string;
+}
+
+export interface AccessRequestDecision {
+  action: "approve" | "reject";
+  roleCode?: RoleCode;
+  scopeType?: ReportScopeType;
+  scopeId?: string;
+  note?: string;
+}
+
+export async function listAccessRequests(): Promise<AccessRequest[]> {
+  const result = await apiFetch<{ requests: AccessRequest[] }>("/users/access-requests");
+  return result.requests;
+}
+
+export async function reviewAccessRequest(
+  id: string,
+  decision: AccessRequestDecision,
+): Promise<void> {
+  await apiFetch(`/users/access-requests/${encodeURIComponent(id)}/review`, {
+    method: "POST",
+    body: decision,
   });
 }
 
@@ -415,28 +451,16 @@ export async function uploadAbsenceDocument(
   id: string,
   file: File,
   category: string,
+  onProgress?: (percent: number) => void,
 ): Promise<AbsenceDocument> {
   const form = new FormData();
   form.append("file", file);
   form.append("documentCategory", category);
-  const headers: Record<string, string> = {};
-  if (csrfToken) headers["x-csrf-token"] = csrfToken;
-  const response = await fetch(`${API_URL}/absence-requests/${id}/documents`, {
-    method: "POST",
-    headers,
-    credentials: "include",
-    body: form,
-  });
-  const text = await response.text();
-  const body = text ? JSON.parse(text) : null;
-  if (!response.ok) {
-    throw new ApiError(
-      response.status,
-      body?.error?.code ?? "REQUEST_FAILED",
-      body?.error?.message ?? "Request failed",
-    );
-  }
-  return body as AbsenceDocument;
+  return uploadWithProgress<AbsenceDocument>(
+    `${API_URL}/absence-requests/${id}/documents`,
+    form,
+    onProgress,
+  );
 }
 
 export async function downloadAbsenceDocument(documentId: string): Promise<Blob> {
@@ -558,30 +582,60 @@ export async function uploadEvidence(
   file: File,
   stage: EvidenceStage,
   caption: string,
+  onProgress?: (percent: number) => void,
 ): Promise<Evidence> {
   const form = new FormData();
   form.append("file", file);
   form.append("workLogId", workLogId);
   form.append("stage", stage);
   form.append("caption", caption);
-  const headers: Record<string, string> = {};
-  if (csrfToken) headers["x-csrf-token"] = csrfToken;
-  const response = await fetch(`${API_URL}/evidence`, {
-    method: "POST",
-    headers,
-    credentials: "include",
-    body: form,
+  return uploadWithProgress<Evidence>(`${API_URL}/evidence`, form, onProgress);
+}
+
+/** Multipart upload via XMLHttpRequest so progress can be surfaced on slow field links. */
+function uploadWithProgress<T>(
+  url: string,
+  form: FormData,
+  onProgress?: (percent: number) => void,
+): Promise<T> {
+  return new Promise<T>((resolve, reject) => {
+    const xhr = new XMLHttpRequest();
+    xhr.open("POST", url);
+    xhr.withCredentials = true;
+    if (csrfToken) xhr.setRequestHeader("x-csrf-token", csrfToken);
+    if (onProgress) {
+      xhr.upload.addEventListener("progress", (event) => {
+        if (event.lengthComputable) {
+          onProgress(Math.round((event.loaded / event.total) * 100));
+        }
+      });
+    }
+    xhr.addEventListener("load", () => {
+      const text = xhr.responseText || "null";
+      let body: T | null = null;
+      try {
+        body = JSON.parse(text);
+      } catch {
+        body = null;
+      }
+      if (xhr.status >= 200 && xhr.status < 300) {
+        resolve(body as T);
+        return;
+      }
+      const errorBody = body as { error?: { code?: string; message?: string } } | null;
+      reject(
+        new ApiError(
+          xhr.status,
+          errorBody?.error?.code ?? "REQUEST_FAILED",
+          errorBody?.error?.message ?? "Request failed",
+        ),
+      );
+    });
+    xhr.addEventListener("error", () => {
+      reject(new ApiError(0, "REQUEST_FAILED", "Network error during upload"));
+    });
+    xhr.send(form);
   });
-  const text = await response.text();
-  const body = text ? JSON.parse(text) : null;
-  if (!response.ok) {
-    throw new ApiError(
-      response.status,
-      body?.error?.code ?? "REQUEST_FAILED",
-      body?.error?.message ?? "Request failed",
-    );
-  }
-  return body as Evidence;
 }
 
 export async function downloadEvidence(evidenceId: string): Promise<Blob> {

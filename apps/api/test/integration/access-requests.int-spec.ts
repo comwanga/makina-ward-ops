@@ -273,4 +273,23 @@ describe("access requests (integration)", () => {
     });
     expect(allowed.statusCode).toBe(200);
   });
+
+  it("rate-limits public access requests per source IP", async () => {
+    let lastStatus = 0;
+    for (let i = 0; i < 21; i += 1) {
+      const response = await app.inject({
+        method: "POST",
+        url: "/api/v1/users/access-requests",
+        headers: { "x-forwarded-for": "203.0.113.9" },
+        payload: {
+          displayName: "Burst Requester",
+          email: `burst.request.${i}@makina.test`,
+          password: REQUEST_PASSWORD,
+          reason: "Testing the public access request throttle",
+        },
+      });
+      lastStatus = response.statusCode;
+    }
+    expect(lastStatus).toBe(429);
+  });
 });

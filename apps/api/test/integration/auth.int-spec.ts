@@ -167,6 +167,24 @@ describe("auth flow (integration)", () => {
     expect(bootstrapCount).toBeGreaterThanOrEqual(1);
   });
 
+  it("rate-limits owner bootstrap per source IP", async () => {
+    let lastStatus = 0;
+    for (let i = 0; i < 21; i += 1) {
+      const response = await app.inject({
+        method: "POST",
+        url: "/api/v1/auth/bootstrap",
+        headers: { "x-forwarded-for": "198.51.100.7" },
+        payload: {
+          setupToken: "wrong-token",
+          email: `burst-${i}@makina.test`,
+          password: "OwnerPass-123456",
+        },
+      });
+      lastStatus = response.statusCode;
+    }
+    expect(lastStatus).toBe(429);
+  });
+
   it("exposes health endpoints without authentication", async () => {
     const live = await api(app, { method: "GET", url: "/health/live" });
     expect(live.statusCode).toBe(200);
