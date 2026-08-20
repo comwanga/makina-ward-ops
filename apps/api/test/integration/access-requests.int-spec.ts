@@ -36,6 +36,51 @@ describe("access requests (integration)", () => {
     await resetAuthData(prisma);
   });
 
+  it("exposes a sanitized public organisation directory", async () => {
+    const response = await api(app, {
+      method: "GET",
+      url: "/api/v1/organisations/public",
+    });
+
+    expect(response.statusCode).toBe(200);
+    const county = response.json().counties.find(
+      (item: { code: string }) => item.code === "NCC",
+    );
+    expect(county.name).toBe("Nairobi City County");
+    expect(county.subcounties[0].wards[0]).toEqual(
+      expect.objectContaining({ id: expect.any(String), code: expect.any(String), name: expect.any(String) }),
+    );
+    expect(JSON.stringify(response.json())).not.toContain("employee");
+  });
+
+  it("rejects unscoped and nonexistent-scope requests", async () => {
+    const unscoped = await api(app, {
+      method: "POST",
+      url: "/api/v1/users/access-requests",
+      payload: {
+        displayName: "Unscoped Applicant",
+        email: "unscoped@makina.test",
+        password: REQUEST_PASSWORD,
+        reason: "Request without an organisation scope",
+      },
+    });
+    expect(unscoped.statusCode).toBe(422);
+
+    const nonexistent = await api(app, {
+      method: "POST",
+      url: "/api/v1/users/access-requests",
+      payload: {
+        displayName: "Unknown Scope Applicant",
+        email: "unknown.scope@makina.test",
+        password: REQUEST_PASSWORD,
+        reason: "Request for an unknown organisation scope",
+        requestedScope: "WARD",
+        requestedScopeId: "clzzzzzzzzzzzzzzzzzzzzzzz",
+      },
+    });
+    expect(nonexistent.statusCode).toBe(400);
+  });
+
   it("allows a public request and blocks duplicates", async () => {
     const response = await api(app, {
       method: "POST",
@@ -60,6 +105,8 @@ describe("access requests (integration)", () => {
         email: "jane.worker@makina.test",
         password: REQUEST_PASSWORD,
         reason: "Another reason for the same email",
+        requestedScope: "WARD",
+        requestedScopeId: makinaWard.id,
       },
     });
     expect(duplicate.statusCode).toBe(409);
@@ -76,6 +123,8 @@ describe("access requests (integration)", () => {
         email: "jane.worker@makina.test",
         password: REQUEST_PASSWORD,
         reason: "Field staff for the Makina green army",
+        requestedScope: "WARD",
+        requestedScopeId: makinaWard.id,
       },
     });
     const requestId = created.json().id as string;
@@ -128,6 +177,8 @@ describe("access requests (integration)", () => {
         email: "jane.worker@makina.test",
         password: REQUEST_PASSWORD,
         reason: "Field staff for the Makina green army",
+        requestedScope: "WARD",
+        requestedScopeId: makinaWard.id,
       },
     });
     const requestId = created.json().id as string;
@@ -156,6 +207,8 @@ describe("access requests (integration)", () => {
         email: "jane.worker@makina.test",
         password: REQUEST_PASSWORD,
         reason: "Field staff for the Makina green army",
+        requestedScope: "WARD",
+        requestedScopeId: makinaWard.id,
       },
     });
     const requestId = created.json().id as string;
@@ -221,6 +274,19 @@ describe("access requests (integration)", () => {
     });
     const emails = list.json().requests.map((request: { email: string }) => request.email);
     expect(emails).not.toContain("mombasa.applicant@makina.test");
+
+    const rejected = await api(app, {
+      method: "POST",
+      url: `/api/v1/users/access-requests/${(
+        await prisma.accessRequest.findFirstOrThrow({
+          where: { email: "mombasa.applicant@makina.test" },
+        })
+      ).id}/review`,
+      cookie: admin.cookie,
+      csrf: admin.csrf,
+      payload: { action: "reject", note: "outside county" },
+    });
+    expect(rejected.statusCode).toBe(403);
   });
 
   it("forces a password change before other endpoints are usable", async () => {
@@ -286,6 +352,8 @@ describe("access requests (integration)", () => {
           email: `burst.request.${i}@makina.test`,
           password: REQUEST_PASSWORD,
           reason: "Testing the public access request throttle",
+          requestedScope: "WARD",
+          requestedScopeId: makinaWard.id,
         },
       });
       lastStatus = response.statusCode;

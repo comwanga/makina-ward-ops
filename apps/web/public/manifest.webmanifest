@@ -2,11 +2,24 @@
   "name": "MazingiraOps",
   "short_name": "MazingiraOps",
   "description": "Multi-ward environment operations reporting",
-  "start_url": "/",
+  "id": "/dashboard",
+  "start_url": "/dashboard",
   "scope": "/",
   "display": "standalone",
   "background_color": "#f4f2e9",
   "theme_color": "#143d2b",
+  "shortcuts": [
+    {
+      "name": "Dashboard",
+      "url": "/dashboard",
+      "icons": [{ "src": "/icon-192.png", "sizes": "192x192" }]
+    },
+    {
+      "name": "Attendance",
+      "url": "/attendance",
+      "icons": [{ "src": "/icon-192.png", "sizes": "192x192" }]
+    }
+  ],
   "icons": [
     {
       "src": "/icon-192.png",

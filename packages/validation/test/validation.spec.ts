@@ -75,6 +75,12 @@ describe("createWorkLogSchema", () => {
       createWorkLogSchema.parse({ ...base, completionStatus: "INCOMPLETE" }),
     ).toThrow();
   });
+
+  it("rejects impossible calendar dates and permissive booleans", () => {
+    expect(() => createWorkLogSchema.parse({ ...base, workDate: "2026-02-30" })).toThrow();
+    expect(() => createWorkLogSchema.parse({ ...base, wasteTransferInvolved: "yes" })).toThrow();
+    expect(createWorkLogSchema.parse({ ...base, cleanupDone: "false" }).cleanupDone).toBe(false);
+  });
 });
 
 describe("createAbsenceSchema", () => {
@@ -165,6 +171,7 @@ describe("checkInSchema", () => {
     const parsed = checkInSchema.parse({
       sessionToken: "0123456789abcdef0123456789abcdef",
       employeeNumber: "20230464669",
+      phoneLast4: "5601",
       latitude: -1.3,
       longitude: 36.8,
     });
@@ -176,6 +183,7 @@ describe("checkInSchema", () => {
       checkInSchema.parse({
         sessionToken: "0123456789abcdef0123456789abcdef",
         employeeNumber: "123",
+        phoneLast4: "5601",
       }),
     ).toThrow();
   });
@@ -185,6 +193,7 @@ describe("checkInSchema", () => {
       checkInSchema.parse({
         sessionToken: "0123456789abcdef0123456789abcdef",
         employeeNumber: "20230464669",
+        phoneLast4: "5601",
         latitude: 200,
       }),
     ).toThrow();
@@ -193,6 +202,7 @@ describe("checkInSchema", () => {
 
 describe("manualAttendanceSchema", () => {
   const base = {
+    sessionId: "clh00000000000000000000002",
     employeeId: "clh00000000000000000000001",
     status: "PRESENT",
     reason: "Supervisor verified attendance",

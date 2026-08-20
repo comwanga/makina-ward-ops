@@ -15,6 +15,7 @@ import { CheckInThrottleService } from "./check-in-throttle.service";
 import type {
   AttendanceQueryInput,
   CheckInInput,
+  CorrectAttendanceInput,
   CreateAttendanceSessionInput,
   ManualAttendanceInput,
   RosterQueryInput,
@@ -81,9 +82,10 @@ export class AttendanceService {
   private async findCheckInEmployee(
     employeeNumber: string,
     wardId: string,
+    phoneLast4: string,
   ): Promise<Prisma.EmployeeGetPayload<{ include: { assignments: true } }> | null> {
     const homed = await this.prisma.client.employee.findFirst({
-      where: { employeeNumber, active: true, wardId },
+      where: { employeeNumber, phone: { endsWith: phoneLast4 }, active: true, wardId },
       include: { assignments: true },
     });
     if (homed) {
@@ -92,6 +94,7 @@ export class AttendanceService {
     return this.prisma.client.employee.findFirst({
       where: {
         employeeNumber,
+        phone: { endsWith: phoneLast4 },
         active: true,
         assignments: { some: { wardId, endedAt: null } },
       },
@@ -182,10 +185,15 @@ export class AttendanceService {
     if (query.workDate) {
       where.workDate = toDateOnly(query.workDate);
     }
+    if (query.active !== undefined) {
+      where.closesAt = query.active ? { gt: new Date() } : { lte: new Date() };
+    }
     const sessions = await this.prisma.client.attendanceSession.findMany({
       where,
       include: { ward: true },
       orderBy: { createdAt: "desc" },
+      skip: query.page ? (query.page - 1) * (query.pageSize ?? 25) : undefined,
+      take: query.page || query.pageSize ? query.pageSize ?? 25 : undefined,
     });
     const canManage = auth.capabilities.includes("ATTENDANCE_MANAGE");
     return sessions.map((session) => ({
@@ -198,6 +206,7 @@ export class AttendanceService {
       location: session.location,
       opensAt: session.opensAt,
       closesAt: session.closesAt,
+      active: session.closesAt > new Date(),
       createdAt: session.createdAt,
     }));
   }
@@ -222,8 +231,38 @@ export class AttendanceService {
       location: session.location,
       opensAt: session.opensAt,
       closesAt: session.closesAt,
+      active: session.closesAt > new Date(),
       createdAt: session.createdAt,
     };
+  }
+
+  async closeSession(
+    auth: AuthContext,
+    id: string,
+    revoke: boolean,
+    meta: RequestMeta,
+  ): Promise<Record<string, unknown>> {
+    const session = await this.prisma.client.attendanceSession.findUnique({ where: { id } });
+    if (!session) throw new NotFoundException("Attendance session not found");
+    await this.sessionVisible(auth, session);
+    if (session.closesAt <= new Date()) throw new ConflictException("Attendance session is already closed");
+    const result = await this.prisma.client.attendanceSession.updateMany({
+      where: { id, closesAt: { gt: new Date() } },
+      data: { closesAt: new Date(), ...(revoke ? { token: sessionToken() } : {}) },
+    });
+    if (result.count === 0) throw new ConflictException("Attendance session is already closed");
+    const updated = await this.prisma.client.attendanceSession.findUniqueOrThrow({ where: { id } });
+    await this.audit.record({
+      action: revoke ? "ATTENDANCE.SESSION_REVOKED" : "ATTENDANCE.SESSION_CLOSED",
+      targetType: "AttendanceSession",
+      targetId: id,
+      scopeType: "WARD",
+      scopeId: session.wardId,
+      actorUserId: auth.userId,
+      sourceIp: meta.sourceIp,
+      requestId: meta.requestId,
+    });
+    return { id: updated.id, wardId: updated.wardId, closesAt: updated.closesAt, active: false };
   }
 
   // -- QR check-in ------------------------------------------------------------
@@ -241,7 +280,7 @@ export class AttendanceService {
       throw new BadRequestException("This attendance session is not open. Contact your supervisor.");
     }
 
-    const employee = await this.findCheckInEmployee(input.employeeNumber, session.wardId);
+    const employee = await this.findCheckInEmployee(input.employeeNumber, session.wardId, input.phoneLast4);
 
     if (!employee) {
       this.throttle.recordFailure(key);
@@ -253,9 +292,9 @@ export class AttendanceService {
         scopeId: session.wardId,
         sourceIp: meta.sourceIp,
         requestId: meta.requestId,
-        details: "Employee verification failed",
+        details: "Employee ID or phone verification failed",
       });
-      throw new BadRequestException("This Employee ID does not match an active employee in this ward's register.");
+      throw new BadRequestException("Employee ID or phone verification failed.");
     }
 
     const status: AttendanceStatus =
@@ -290,9 +329,7 @@ export class AttendanceService {
       });
       return {
         ok: true,
-        message: `Attendance confirmed for ${employee.fullName}.`,
         status,
-        employee: { id: employee.id, fullName: employee.fullName },
         checkedAt: record.checkedAt,
       };
     } catch (error) {
@@ -310,22 +347,27 @@ export class AttendanceService {
     input: ManualAttendanceInput,
     meta: RequestMeta,
   ): Promise<Record<string, unknown>> {
-    const employee = await this.prisma.client.employee.findUnique({
-      where: { id: input.employeeId },
+    const session = await this.prisma.client.attendanceSession.findUnique({ where: { id: input.sessionId } });
+    if (!session) throw new NotFoundException("Attendance session not found");
+    await this.sessionVisible(auth, session);
+    if (session.workDate.getTime() !== toDateOnly(input.workDate).getTime()) {
+      throw new BadRequestException("Work date does not match the selected attendance session");
+    }
+    const employee = await this.prisma.client.employee.findFirst({
+      where: {
+        id: input.employeeId,
+        active: true,
+        OR: [
+          { wardId: session.wardId },
+          { assignments: { some: { wardId: session.wardId, endedAt: null } } },
+        ],
+      },
     });
     if (!employee || !employee.active) {
       throw new NotFoundException("Employee not found");
     }
-    await this.wardAccessibleOrThrow(auth, employee.wardId);
 
     const workDateDate = toDateOnly(input.workDate);
-    const session = await this.prisma.client.attendanceSession.findFirst({
-      where: { wardId: employee.wardId, workDate: workDateDate },
-      orderBy: { createdAt: "desc" },
-    });
-    if (!session) {
-      throw new NotFoundException("No attendance session exists for this ward on that date");
-    }
 
     const existing = await this.prisma.client.attendance.findUnique({
       where: { employeeId_workDate: { employeeId: employee.id, workDate: workDateDate } },
@@ -339,7 +381,7 @@ export class AttendanceService {
         data: {
           employeeId: employee.id,
           sessionId: session.id,
-          wardId: employee.wardId,
+          wardId: session.wardId,
           workDate: workDateDate,
           checkedAt: new Date(),
           status: input.status,
@@ -351,11 +393,11 @@ export class AttendanceService {
         targetType: "Employee",
         targetId: employee.id,
         scopeType: "WARD",
-        scopeId: employee.wardId,
+        scopeId: session.wardId,
         actorUserId: auth.userId,
         sourceIp: meta.sourceIp,
         requestId: meta.requestId,
-        details: `${input.status}: ${input.reason}`,
+        details: `${input.status}: ${input.reason}; session=${session.id}`,
       });
       return {
         id: record.id,
@@ -371,6 +413,39 @@ export class AttendanceService {
     }
   }
 
+  async correct(
+    auth: AuthContext,
+    attendanceId: string,
+    input: CorrectAttendanceInput,
+    meta: RequestMeta,
+  ): Promise<Record<string, unknown>> {
+    const existing = await this.prisma.client.attendance.findUnique({
+      where: { id: attendanceId },
+      include: { session: true },
+    });
+    if (!existing || existing.sessionId !== input.sessionId) {
+      throw new NotFoundException("Attendance record not found in the selected session");
+    }
+    await this.sessionVisible(auth, existing.session);
+    if (existing.status === input.status) throw new ConflictException("Attendance already has that status");
+    const updated = await this.prisma.client.attendance.update({
+      where: { id: attendanceId },
+      data: { status: input.status, verificationMethod: "MANUAL" },
+    });
+    await this.audit.record({
+      action: "ATTENDANCE.CORRECTED",
+      targetType: "Attendance",
+      targetId: attendanceId,
+      scopeType: "WARD",
+      scopeId: existing.wardId,
+      actorUserId: auth.userId,
+      sourceIp: meta.sourceIp,
+      requestId: meta.requestId,
+      details: `${existing.status} -> ${input.status}: ${input.reason}; session=${input.sessionId}`,
+    });
+    return { id: updated.id, sessionId: updated.sessionId, status: updated.status, checkedAt: updated.checkedAt };
+  }
+
   // -- Reads ------------------------------------------------------------------
 
   async listAttendance(auth: AuthContext, query: AttendanceQueryInput): Promise<Array<Record<string, unknown>>> {
@@ -383,7 +458,9 @@ export class AttendanceService {
       where.wardId = query.wardId;
     }
     if (query.sessionId) where.sessionId = query.sessionId;
+    if (query.employeeId) where.employeeId = query.employeeId;
     if (query.workDate) where.workDate = toDateOnly(query.workDate);
+    if (query.status) where.status = query.status;
 
     const records = await this.prisma.client.attendance.findMany({
       where,
@@ -392,6 +469,8 @@ export class AttendanceService {
         session: { select: { id: true, activity: true, location: true } },
       },
       orderBy: [{ workDate: "desc" }, { checkedAt: "desc" }],
+      skip: query.page ? (query.page - 1) * (query.pageSize ?? 25) : undefined,
+      take: query.page || query.pageSize ? query.pageSize ?? 25 : undefined,
     });
     return records.map((record) => ({
       id: record.id,
@@ -412,22 +491,44 @@ export class AttendanceService {
     await this.wardAccessibleOrThrow(auth, query.wardId);
     const workDate = query.workDate ?? todayNairobi();
     const workDateDate = toDateOnly(workDate);
+    const nextDate = new Date(workDateDate.getTime() + 24 * 60 * 60 * 1000);
 
     const employees = await this.prisma.client.employee.findMany({
       where: {
-        active: true,
-        OR: [
-          { wardId: query.wardId },
-          { assignments: { some: { wardId: query.wardId, endedAt: null } } },
-        ],
+        OR: [{ active: true }, { deactivatedAt: { gte: workDateDate } }],
+        AND: [{
+          OR: [
+            {
+              assignments: {
+                some: {
+                  wardId: query.wardId,
+                  assignedAt: { lt: nextDate },
+                  OR: [{ endedAt: null }, { endedAt: { gte: workDateDate } }],
+                },
+              },
+            },
+            {
+              wardId: query.wardId,
+              assignments: { none: { kind: "PRIMARY" } },
+            },
+          ],
+        }],
       },
       include: { profile: true },
       orderBy: { fullName: "asc" },
     });
 
-    const records = await this.prisma.client.attendance.findMany({
-      where: { wardId: query.wardId, workDate: workDateDate },
+    const deployment = await this.prisma.client.attendanceSession.findFirst({
+      where: {
+        id: query.sessionId,
+        wardId: query.wardId,
+        workDate: workDateDate,
+      },
+      orderBy: { createdAt: "desc" },
     });
+    const records = deployment
+      ? await this.prisma.client.attendance.findMany({ where: { sessionId: deployment.id } })
+      : [];
     const recordByEmployee = new Map(records.map((record) => [record.employeeId, record]));
 
     // Approved absences reconcile the roster so an employee on approved leave
@@ -481,6 +582,9 @@ export class AttendanceService {
         status,
         detail,
         manualEditable,
+        attendanceId: record?.id ?? null,
+        sessionId: record?.sessionId ?? deployment?.id ?? null,
+        correctionAllowed: Boolean(record),
       };
     });
   }

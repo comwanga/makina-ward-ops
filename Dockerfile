@@ -1,16 +1,27 @@
-FROM python:3.12-slim
-
-ENV PYTHONDONTWRITEBYTECODE=1 PYTHONUNBUFFERED=1
+FROM node:24-bookworm-slim AS build
+RUN apt-get update \
+  && apt-get install -y --no-install-recommends openssl \
+  && rm -rf /var/lib/apt/lists/* \
+  && corepack enable \
+  && corepack prepare pnpm@8.15.9 --activate
 WORKDIR /app
+COPY . .
+RUN pnpm install --frozen-lockfile
+ENV DATABASE_URL=postgresql://build:build@localhost:5432/build
+RUN pnpm db:generate \
+  && pnpm --filter @ward-ops/contracts build \
+  && pnpm --filter @ward-ops/validation build \
+  && pnpm --filter @ward-ops/database build \
+  && pnpm --filter @ward-ops/api build
 
-RUN addgroup --system makina && adduser --system --ingroup makina makina
-COPY requirements.txt .
-RUN pip install --no-cache-dir -r requirements.txt
-COPY app app
-COPY static static
-COPY templates templates
-RUN mkdir -p /app/data/documents && chown -R makina:makina /app
-
-USER makina
-EXPOSE 8000
-CMD ["sh", "-c", "uvicorn app.main:app --host 0.0.0.0 --port ${PORT:-8000} --proxy-headers --forwarded-allow-ips '*'"]
+FROM node:24-bookworm-slim AS runtime
+RUN corepack enable \
+  && apt-get update \
+  && apt-get install -y --no-install-recommends openssl postgresql-client \
+  && rm -rf /var/lib/apt/lists/*
+ENV NODE_ENV=production APP_ENV=production
+WORKDIR /app
+COPY --from=build /app ./
+USER node
+EXPOSE 4000
+CMD ["sh", "-c", "pnpm db:deploy && node packages/database/dist/seed.js && exec node apps/api/dist/main.js"]

@@ -132,7 +132,16 @@ export async function createUserWithAssignment(
     email: string;
     password: string;
     displayName: string;
-    roleCode: "SYSTEM_ADMIN" | "WARD_OFFICER" | "SUBCOUNTY_REVIEWER" | "HR_VIEWER" | "READ_ONLY";
+    roleCode:
+      | "SYSTEM_ADMIN"
+      | "WARD_OFFICER"
+      | "SUBCOUNTY_REVIEWER"
+      | "CHIEF_SUBCOUNTY_OFFICER"
+      | "ASSISTANT_DIRECTOR"
+      | "DEPUTY_DIRECTOR"
+      | "DIRECTOR"
+      | "HR_VIEWER"
+      | "READ_ONLY";
     scopeType: "COUNTY" | "SUBCOUNTY" | "WARD";
     scopeId: string;
   },

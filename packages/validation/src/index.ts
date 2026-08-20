@@ -1,5 +1,6 @@
 export * from "./common";
 export * from "./auth";
+export * from "./user";
 export * from "./staff";
 export * from "./attendance";
 export * from "./absence";

@@ -1,6 +1,7 @@
 import { afterAll, beforeAll, beforeEach, describe, expect, it } from "vitest";
 import type { NestFastifyApplication } from "@nestjs/platform-fastify";
 import { PrismaClient } from "@ward-ops/database";
+import { LocalObjectStorage } from "../../dist/storage/object-storage.service";
 import { testConfig } from "./test-config";
 import {
   api,
@@ -407,6 +408,22 @@ describe("reports (integration)", () => {
     expect(preview.json().snapshot.workLogs).toHaveLength(0);
   });
 
+  it("does not infer absences on weekdays with no attendance session", async () => {
+    await createEmployee("20250100100", "Rostered Staff", makinaWard.id);
+    await createSession(makinaWard.id, TUESDAY);
+
+    const preview = await api(app, {
+      method: "GET",
+      url: `/api/v1/reports/preview?scopeType=WARD&scopeId=${makinaWard.id}&startDate=${MONDAY}&endDate=${TUESDAY}&kind=WEEKLY`,
+      cookie: reviewer.cookie,
+    });
+
+    expect(preview.statusCode).toBe(200);
+    const snapshot = preview.json().snapshot;
+    expect(snapshot.days.map((day: { date: string }) => day.date)).toEqual([TUESDAY]);
+    expect(snapshot.totals.ABSENT).toBe(1);
+  });
+
   // -- Scope isolation ---------------------------------------------------------
 
   it("isolates reports by scope: a foreign ward officer cannot preview", async () => {
@@ -504,6 +521,7 @@ describe("reports (integration)", () => {
     expect(report.snapshot.workLogs[0].description).toBe("Desilted open drains along the market");
     expect(report.snapshot.totals.PRESENT).toBe(1);
     expect(report.snapshot.signedBy).toBe("Subcounty Reviewer");
+    expect(report.snapshot.signedTitle).toBe("Subcounty Reviewer");
     expect(report.finalizedAt).toBeDefined();
 
     // Evidence references captured immutably in ReportEvidence rows.
@@ -516,7 +534,10 @@ describe("reports (integration)", () => {
         sha256: "b".repeat(64),
       }),
     );
-    expect(report.evidence[0].objectKey).toContain("objects/evidence-");
+    expect(report.evidence[0].objectKey).toBeUndefined();
+    expect(report.evidence[0].accessPath).toBe(
+      `/api/v1/reports/${reportId}/evidence/${report.evidence[0].id}`,
+    );
   });
 
   it("uses deterministic narrative and recommendations when not supplied", async () => {
@@ -596,6 +617,43 @@ describe("reports (integration)", () => {
     expect(snapshot.workLogs).toHaveLength(1);
   });
 
+  it("looks up designations by employee identity when numbers collide across wards", async () => {
+    const employeeNumber = "20250100999";
+    const makinaEmployee = await createEmployee(
+      employeeNumber,
+      "Makina Staff",
+      makinaWard.id,
+      "Makina Designation",
+    );
+    const woodleyEmployee = await prisma.employee.create({
+      data: {
+        employeeNumber,
+        fullName: "Woodley Staff",
+        phone: "0719999999",
+        designation: "Woodley Designation",
+        active: true,
+        wardId: woodleyWard.id,
+        profile: { create: { residence: null, rosterStatus: "ON_DUTY" } },
+      },
+    });
+    const makinaSession = await createSession(makinaWard.id, MONDAY);
+    const woodleySession = await createSession(woodleyWard.id, MONDAY);
+    await createAttendance(makinaEmployee, makinaSession.id, makinaWard.id, MONDAY, "PRESENT");
+    await createAttendance(woodleyEmployee.id, woodleySession.id, woodleyWard.id, MONDAY, "PRESENT");
+
+    const preview = await api(app, {
+      method: "GET",
+      url: `/api/v1/reports/preview?scopeType=COUNTY&scopeId=${nccCounty.id}&startDate=${MONDAY}&endDate=${MONDAY}&kind=DAILY`,
+      cookie: countyAdmin.cookie,
+    });
+    expect(preview.statusCode).toBe(200);
+    const wards = preview.json().snapshot.days[0].wards as Array<Record<string, any>>;
+    const roles = Object.fromEntries(
+      wards.map((ward) => [ward.wardName, ward.roster[0].role]),
+    );
+    expect(roles).toEqual({ Makina: "Makina Designation", Woodley: "Woodley Designation" });
+  });
+
   // -- Photo sampling (§8) -----------------------------------------------------
 
   it("keeps all photos for daily reports and samples at most four per stage otherwise", async () => {
@@ -603,8 +661,10 @@ describe("reports (integration)", () => {
     const session = await createSession(makinaWard.id, MONDAY);
     await createAttendance(presentId, session.id, makinaWard.id, MONDAY, "PRESENT");
     const workLogId = await createApprovedWorkLog(makinaWard.id, MONDAY);
+    const secondWorkLogId = await createApprovedWorkLog(makinaWard.id, TUESDAY);
     for (let index = 0; index < 5; index += 1) {
       await createEvidence(workLogId, "BEFORE", `Before ${index}`);
+      await createEvidence(secondWorkLogId, "BEFORE", `Second before ${index}`);
     }
 
     const daily = await api(app, {
@@ -620,7 +680,100 @@ describe("reports (integration)", () => {
       cookie: reviewer.cookie,
     });
     expect(weekly.statusCode).toBe(200);
-    expect(weekly.json().snapshot.workLogs[0].photos).toHaveLength(4);
+    const weeklyPhotos = weekly
+      .json()
+      .snapshot.workLogs.flatMap((workLog: { photos: unknown[] }) => workLog.photos);
+    expect(weeklyPhotos).toHaveLength(4);
+  });
+
+  it("serves finalized report evidence through scoped access without exposing object keys", async () => {
+    const storage = new LocalObjectStorage(testConfig(TEST_DB_URL) as never);
+    const bytes = Buffer.from("immutable report evidence", "utf8");
+    const stored = await storage.save({
+      buffer: bytes,
+      originalName: "proof.jpg",
+      contentType: "image/jpeg",
+    });
+    try {
+      const workLogId = await createApprovedWorkLog(makinaWard.id, MONDAY);
+      await prisma.evidence.create({
+        data: {
+          workLogId,
+          objectKey: stored.objectKey,
+          stage: "AFTER",
+          caption: "Completed work",
+          contentType: "image/jpeg",
+          size: stored.size,
+          sha256: stored.sha256,
+          uploadedBy: "test",
+        },
+      });
+      const finalized = await api(app, {
+        method: "POST",
+        url: "/api/v1/reports",
+        cookie: reviewer.cookie,
+        csrf: reviewer.csrf,
+        payload: {
+          scopeType: "WARD",
+          scopeId: makinaWard.id,
+          startDate: MONDAY,
+          endDate: MONDAY,
+          kind: "DAILY",
+        },
+      });
+      expect(finalized.statusCode).toBe(201);
+      const report = finalized.json() as Record<string, any>;
+      expect(JSON.stringify(report)).not.toContain(stored.objectKey);
+
+      const access = await api(app, {
+        method: "GET",
+        url: report.evidence[0].accessPath,
+        cookie: reviewer.cookie,
+      });
+      expect(access.statusCode).toBe(200);
+      expect(access.headers["content-type"]).toContain("image/jpeg");
+      expect(access.body).toBe(bytes.toString("utf8"));
+
+      const denied = await api(app, {
+        method: "GET",
+        url: report.evidence[0].accessPath,
+        cookie: foreignOfficer.cookie,
+      });
+      expect(denied.statusCode).toBe(404);
+    } finally {
+      await storage.delete(stored.objectKey);
+    }
+  });
+
+  it("returns SQL pagination totals in compatible report-list headers", async () => {
+    const payload = {
+      scopeType: "WARD",
+      scopeId: makinaWard.id,
+      startDate: MONDAY,
+      endDate: MONDAY,
+      kind: "DAILY",
+    };
+    for (let index = 0; index < 2; index += 1) {
+      const finalized = await api(app, {
+        method: "POST",
+        url: "/api/v1/reports",
+        cookie: reviewer.cookie,
+        csrf: reviewer.csrf,
+        payload,
+      });
+      expect(finalized.statusCode).toBe(201);
+    }
+
+    const list = await api(app, {
+      method: "GET",
+      url: "/api/v1/reports?page=2&pageSize=1&kind=DAILY",
+      cookie: reviewer.cookie,
+    });
+    expect(list.statusCode).toBe(200);
+    expect(list.json()).toHaveLength(1);
+    expect(list.headers["x-total-count"]).toBe("2");
+    expect(list.headers["x-page"]).toBe("2");
+    expect(list.headers["x-page-size"]).toBe("1");
   });
 
   // -- CSV export (§8) ---------------------------------------------------------
@@ -677,7 +830,7 @@ describe("reports (integration)", () => {
 
   // -- Optional AI narrative (§25, §39) ---------------------------------------
 
-  it("requires REPORTS_FINALIZE to draft an AI narrative", async () => {
+  it("requires REPORTS_GENERATE to draft an AI narrative", async () => {
     const payload = {
       scopeType: "WARD",
       scopeId: makinaWard.id,
@@ -693,14 +846,14 @@ describe("reports (integration)", () => {
     });
     expect(unauth.statusCode).toBe(401);
 
-    const denied = await api(app, {
+    const generated = await api(app, {
       method: "POST",
       url: "/api/v1/reports/ai-draft",
       cookie: officer.cookie,
       csrf: officer.csrf,
       payload,
     });
-    expect(denied.statusCode).toBe(403);
+    expect(generated.statusCode).toBe(201);
 
     const readOnlyDraft = await api(app, {
       method: "POST",
@@ -803,7 +956,7 @@ describe("reports (integration)", () => {
 
     const valid = await api(app, {
       method: "GET",
-      url: `/api/v1/reports/preview?${base}&startDate=${MONDAY}&endDate=2027-01-05`,
+      url: `/api/v1/reports/preview?scopeType=WARD&scopeId=${makinaWard.id}&kind=CUSTOM&startDate=${MONDAY}&endDate=2027-01-05`,
       cookie: reviewer.cookie,
     });
     expect(valid.statusCode).toBe(200);

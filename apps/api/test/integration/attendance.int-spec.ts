@@ -139,18 +139,45 @@ describe("attendance (integration)", () => {
     const response = await api(app, {
       method: "POST",
       url: `/api/v1/attendance/sessions/${session.token}/check-in`,
-      payload: { employeeNumber },
+      payload: { employeeNumber, phoneLast4: "0100" },
     });
     expect(response.statusCode).toBe(200);
     const body = response.json();
     expect(body.status).toBe("PRESENT");
-    expect(body.employee.id).toBe(employeeId);
+    expect(body.employee).toBeUndefined();
+    expect(body.message).toBeUndefined();
 
     const record = await prisma.attendance.findFirst({
       where: { employeeId },
     });
     expect(record).not.toBeNull();
     expect(record!.verificationMethod).toBe("QR");
+  });
+
+  it("requires phone verification and closes a session immediately", async () => {
+    const session = await createSession();
+    const unverified = await api(app, {
+      method: "POST",
+      url: `/api/v1/attendance/sessions/${session.token}/check-in`,
+      payload: { employeeNumber, phoneLast4: "9999" },
+    });
+    expect(unverified.statusCode).toBe(400);
+
+    const closed = await api(app, {
+      method: "POST",
+      url: `/api/v1/attendance/sessions/${session.id}/close`,
+      cookie: officer.cookie,
+      csrf: officer.csrf,
+    });
+    expect(closed.statusCode).toBe(200);
+    expect(closed.json().active).toBe(false);
+
+    const checkIn = await api(app, {
+      method: "POST",
+      url: `/api/v1/attendance/sessions/${session.token}/check-in`,
+      payload: { employeeNumber, phoneLast4: "0100" },
+    });
+    expect(checkIn.statusCode).toBe(400);
   });
 
   it("marks a late check-in after the 30-minute threshold", async () => {
@@ -162,7 +189,7 @@ describe("attendance (integration)", () => {
     const response = await api(app, {
       method: "POST",
       url: `/api/v1/attendance/sessions/${session.token}/check-in`,
-      payload: { employeeNumber },
+      payload: { employeeNumber, phoneLast4: "0100" },
     });
     expect(response.statusCode).toBe(200);
     expect(response.json().status).toBe("LATE");
@@ -173,14 +200,14 @@ describe("attendance (integration)", () => {
     const first = await api(app, {
       method: "POST",
       url: `/api/v1/attendance/sessions/${session.token}/check-in`,
-      payload: { employeeNumber },
+      payload: { employeeNumber, phoneLast4: "0100" },
     });
     expect(first.statusCode).toBe(200);
 
     const second = await api(app, {
       method: "POST",
       url: `/api/v1/attendance/sessions/${session.token}/check-in`,
-      payload: { employeeNumber },
+      payload: { employeeNumber, phoneLast4: "0100" },
     });
     expect(second.statusCode).toBe(409);
   });
@@ -197,7 +224,7 @@ describe("attendance (integration)", () => {
     const response = await api(app, {
       method: "POST",
       url: `/api/v1/attendance/sessions/${session.token}/check-in`,
-      payload: { employeeNumber: "20250100101" },
+      payload: { employeeNumber: "20250100101", phoneLast4: "0101" },
     });
     expect(response.statusCode).toBe(400);
   });
@@ -219,10 +246,13 @@ describe("attendance (integration)", () => {
     const response = await api(app, {
       method: "POST",
       url: `/api/v1/attendance/sessions/${session.token}/check-in`,
-      payload: { employeeNumber: "20250100999" },
+      payload: { employeeNumber: "20250100999", phoneLast4: "0998" },
     });
     expect(response.statusCode).toBe(200);
-    expect(response.json().employee.fullName).toBe("Makina Duplicate");
+    const checkedIn = await prisma.attendance.findFirstOrThrow({
+      where: { sessionId: session.id, employee: { fullName: "Makina Duplicate" } },
+    });
+    expect(checkedIn.employeeId).toBeTruthy();
   });
 
   it("rejects check-in into an expired session", async () => {
@@ -234,7 +264,7 @@ describe("attendance (integration)", () => {
     const response = await api(app, {
       method: "POST",
       url: `/api/v1/attendance/sessions/${session.token}/check-in`,
-      payload: { employeeNumber },
+      payload: { employeeNumber, phoneLast4: "0100" },
     });
     expect(response.statusCode).toBe(400);
   });
@@ -245,7 +275,7 @@ describe("attendance (integration)", () => {
     const response = await api(app, {
       method: "POST",
       url: `/api/v1/attendance/sessions/${session.token}/check-in`,
-      payload: { employeeNumber },
+      payload: { employeeNumber, phoneLast4: "0100" },
     });
     expect(response.statusCode).toBe(400);
   });
@@ -265,6 +295,7 @@ describe("attendance (integration)", () => {
       cookie: officer.cookie,
       csrf: officer.csrf,
       payload: {
+        sessionId: session.id,
         employeeId: secondEmployeeId,
         workDate: todayNairobi(),
         status: "OFF_DUTY",
@@ -277,7 +308,7 @@ describe("attendance (integration)", () => {
     await api(app, {
       method: "POST",
       url: `/api/v1/attendance/sessions/${session.token}/check-in`,
-      payload: { employeeNumber },
+      payload: { employeeNumber, phoneLast4: "0100" },
     });
 
     const duplicate = await api(app, {
@@ -286,6 +317,7 @@ describe("attendance (integration)", () => {
       cookie: officer.cookie,
       csrf: officer.csrf,
       payload: {
+        sessionId: session.id,
         employeeId,
         workDate: todayNairobi(),
         status: "ABSENT",
@@ -302,7 +334,7 @@ describe("attendance (integration)", () => {
       const response = await api(app, {
         method: "POST",
         url: `/api/v1/attendance/sessions/${session.token}/check-in`,
-        payload: { employeeNumber: "20259999999" },
+        payload: { employeeNumber: "20259999999", phoneLast4: "9999" },
       });
       status = response.statusCode;
       expect(status).toBe(400);
@@ -310,7 +342,7 @@ describe("attendance (integration)", () => {
     const blocked = await api(app, {
       method: "POST",
       url: `/api/v1/attendance/sessions/${session.token}/check-in`,
-      payload: { employeeNumber: "20259999999" },
+      payload: { employeeNumber: "20259999999", phoneLast4: "9999" },
     });
     expect(blocked.statusCode).toBe(429);
   });
@@ -340,7 +372,7 @@ describe("attendance (integration)", () => {
     await api(app, {
       method: "POST",
       url: `/api/v1/attendance/sessions/${session.token}/check-in`,
-      payload: { employeeNumber },
+      payload: { employeeNumber, phoneLast4: "0100" },
     });
     await api(app, {
       method: "POST",
@@ -348,6 +380,7 @@ describe("attendance (integration)", () => {
       cookie: officer.cookie,
       csrf: officer.csrf,
       payload: {
+        sessionId: session.id,
         employeeId: manualId,
         workDate: todayNairobi(),
         status: "SICK_OFF",

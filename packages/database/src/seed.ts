@@ -5,6 +5,7 @@ const prisma = new PrismaClient();
 const CAPABILITIES: Array<{ code: CapabilityCode; name: string }> = [
   { code: "STAFF_READ", name: "View staff register" },
   { code: "STAFF_MANAGE", name: "Manage staff" },
+  { code: "STAFF_IMPORT", name: "Import staff registers" },
   { code: "ATTENDANCE_READ", name: "View attendance" },
   { code: "ATTENDANCE_MANAGE", name: "Manage attendance" },
   { code: "WORK_READ", name: "View work logs" },
@@ -15,9 +16,17 @@ const CAPABILITIES: Array<{ code: CapabilityCode; name: string }> = [
   { code: "ABSENCE_REVIEW", name: "Review absences" },
   { code: "MEDICAL_READ", name: "Access medical documents" },
   { code: "REPORTS_READ", name: "View reports" },
+  { code: "REPORTS_GENERATE", name: "Generate report previews" },
+  { code: "REPORTS_EXPORT", name: "Export reports" },
   { code: "REPORTS_FINALIZE", name: "Finalize reports" },
   { code: "AUDIT_READ", name: "View audit history" },
   { code: "USERS_MANAGE", name: "Manage users" },
+  { code: "USERS_READ", name: "View users" },
+  { code: "USERS_DISABLE", name: "Disable and restore users" },
+  { code: "PERMISSIONS_MANAGE", name: "Manage permissions" },
+  { code: "SCOPE_MANAGE", name: "Manage organisational scope" },
+  { code: "RECORD_ARCHIVE", name: "Archive operational records" },
+  { code: "EVIDENCE_REMOVE", name: "Remove operational evidence" },
 ];
 
 const ROLE_CAPABILITIES: Record<RoleCode, CapabilityCode[]> = {
@@ -25,6 +34,7 @@ const ROLE_CAPABILITIES: Record<RoleCode, CapabilityCode[]> = {
   WARD_OFFICER: [
     "STAFF_READ",
     "STAFF_MANAGE",
+    "STAFF_IMPORT",
     "ATTENDANCE_READ",
     "ATTENDANCE_MANAGE",
     "WORK_READ",
@@ -32,6 +42,7 @@ const ROLE_CAPABILITIES: Record<RoleCode, CapabilityCode[]> = {
     "ABSENCE_READ",
     "ABSENCE_MANAGE",
     "REPORTS_READ",
+    "REPORTS_GENERATE",
   ],
   SUBCOUNTY_REVIEWER: [
     "STAFF_READ",
@@ -41,8 +52,29 @@ const ROLE_CAPABILITIES: Record<RoleCode, CapabilityCode[]> = {
     "ABSENCE_READ",
     "ABSENCE_REVIEW",
     "REPORTS_READ",
+    "REPORTS_GENERATE",
+    "REPORTS_EXPORT",
     "REPORTS_FINALIZE",
     "AUDIT_READ",
+  ],
+  CHIEF_SUBCOUNTY_OFFICER: [
+    "STAFF_READ", "ATTENDANCE_READ", "WORK_READ", "WORK_REVIEW",
+    "ABSENCE_READ", "ABSENCE_REVIEW", "REPORTS_READ", "REPORTS_GENERATE",
+    "REPORTS_EXPORT", "REPORTS_FINALIZE", "AUDIT_READ",
+  ],
+  ASSISTANT_DIRECTOR: [
+    "STAFF_READ", "ATTENDANCE_READ", "WORK_READ", "WORK_REVIEW",
+    "ABSENCE_READ", "ABSENCE_REVIEW", "REPORTS_READ", "REPORTS_GENERATE",
+    "REPORTS_EXPORT", "AUDIT_READ",
+  ],
+  DEPUTY_DIRECTOR: [
+    "STAFF_READ", "ATTENDANCE_READ", "WORK_READ", "WORK_REVIEW",
+    "ABSENCE_READ", "ABSENCE_REVIEW", "REPORTS_READ", "REPORTS_GENERATE",
+    "REPORTS_EXPORT", "REPORTS_FINALIZE", "AUDIT_READ",
+  ],
+  DIRECTOR: [
+    "STAFF_READ", "ATTENDANCE_READ", "WORK_READ", "ABSENCE_READ",
+    "REPORTS_READ", "REPORTS_GENERATE", "REPORTS_EXPORT", "REPORTS_FINALIZE", "AUDIT_READ",
   ],
   HR_VIEWER: [
     "STAFF_READ",
@@ -52,6 +84,7 @@ const ROLE_CAPABILITIES: Record<RoleCode, CapabilityCode[]> = {
     "ABSENCE_REVIEW",
     "MEDICAL_READ",
     "REPORTS_READ",
+    "REPORTS_GENERATE",
   ],
   // READ_ONLY mirrors the legacy "read-only benchmark" default grants.
   READ_ONLY: ["ATTENDANCE_READ", "REPORTS_READ"],
@@ -62,7 +95,7 @@ async function main() {
   for (const capability of CAPABILITIES) {
     const created = await prisma.capability.upsert({
       where: { code: capability.code },
-      update: {},
+      update: { name: capability.name },
       create: capability,
     });
     capabilityByCode.set(created.code, created.id);
@@ -71,8 +104,15 @@ async function main() {
   for (const [roleCode, capabilityCodes] of Object.entries(ROLE_CAPABILITIES)) {
     const role = await prisma.role.upsert({
       where: { code: roleCode as RoleCode },
-      update: {},
+      update: { name: roleCode.replace(/_/g, " ").toLowerCase() },
       create: { code: roleCode as RoleCode, name: roleCode.replace(/_/g, " ").toLowerCase() },
+    });
+    if (role.permissionsManagedAt) continue;
+    const expectedCapabilityIds = capabilityCodes
+      .map((code) => capabilityByCode.get(code))
+      .filter((id): id is string => id !== undefined);
+    await prisma.roleCapability.deleteMany({
+      where: { roleId: role.id, capabilityId: { notIn: expectedCapabilityIds } },
     });
     for (const capabilityCode of capabilityCodes) {
       const capabilityId = capabilityByCode.get(capabilityCode);
@@ -87,19 +127,19 @@ async function main() {
 
   const county = await prisma.county.upsert({
     where: { code: "NCC" },
-    update: {},
+    update: { name: "Nairobi City County" },
     create: { code: "NCC", name: "Nairobi City County" },
   });
 
   const subcounty = await prisma.subcounty.upsert({
     where: { code: "KIBRA" },
-    update: {},
+    update: { name: "Kibra", countyId: county.id },
     create: { code: "KIBRA", name: "Kibra", countyId: county.id },
   });
 
   await prisma.ward.upsert({
     where: { code: "MAKINA" },
-    update: {},
+    update: { name: "Makina", subcountyId: subcounty.id },
     create: { code: "MAKINA", name: "Makina", subcountyId: subcounty.id },
   });
 

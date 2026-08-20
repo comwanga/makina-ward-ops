@@ -3,7 +3,8 @@
 import { FormEvent, useState } from "react";
 import Link from "next/link";
 import { BrandLogo } from "@/components/BrandLogo";
-import { ApiError, bootstrapOwner } from "@/lib/api";
+import { StatusMessages } from "@/components/StatusMessages";
+import { apiErrorMessage, bootstrapOwner } from "@/lib/api";
 
 export default function SetupPage() {
   const [form, setForm] = useState({
@@ -29,7 +30,7 @@ export default function SetupPage() {
       });
       setDone(true);
     } catch (err) {
-      setError(err instanceof ApiError ? err.message : "Unable to complete setup");
+      setError(apiErrorMessage(err, "Unable to complete setup"));
     } finally {
       setSubmitting(false);
     }
@@ -45,9 +46,7 @@ export default function SetupPage() {
 
         {done ? (
           <div className="auth-form">
-            <p className="form-success">
-              System owner created. Sign in with the account you just created.
-            </p>
+            <StatusMessages notice="System owner created. Sign in with the account you just created." />
             <p className="auth-links">
               <Link href="/login">Continue to sign in</Link>
             </p>
@@ -90,9 +89,9 @@ export default function SetupPage() {
               minLength={12}
               required
             />
-            {error && <p className="form-error">{error}</p>}
+            <StatusMessages error={error} />
             <button type="submit" disabled={submitting}>
-              {submitting ? "Creating…" : "Create owner account"}
+              {submitting ? "Creating..." : "Create owner account"}
             </button>
           </form>
         )}

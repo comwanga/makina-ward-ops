@@ -19,6 +19,10 @@ enum RoleCode {
   SYSTEM_ADMIN
   WARD_OFFICER
   SUBCOUNTY_REVIEWER
+  CHIEF_SUBCOUNTY_OFFICER
+  ASSISTANT_DIRECTOR
+  DEPUTY_DIRECTOR
+  DIRECTOR
   HR_VIEWER
   READ_ONLY
 }
@@ -32,6 +36,7 @@ enum ScopeType {
 enum CapabilityCode {
   STAFF_READ
   STAFF_MANAGE
+  STAFF_IMPORT
   ATTENDANCE_READ
   ATTENDANCE_MANAGE
   WORK_READ
@@ -42,9 +47,17 @@ enum CapabilityCode {
   ABSENCE_REVIEW
   MEDICAL_READ
   REPORTS_READ
+  REPORTS_GENERATE
+  REPORTS_EXPORT
   REPORTS_FINALIZE
   AUDIT_READ
   USERS_MANAGE
+  USERS_READ
+  USERS_DISABLE
+  PERMISSIONS_MANAGE
+  SCOPE_MANAGE
+  RECORD_ARCHIVE
+  EVIDENCE_REMOVE
 }
 
 enum AttendanceStatus {
@@ -60,6 +73,11 @@ enum AttendanceStatus {
 enum VerificationMethod {
   QR
   MANUAL
+}
+
+enum EmployeeAssignmentKind {
+  PRIMARY
+  TEMPORARY
 }
 
 enum AbsenceKind {
@@ -149,6 +167,7 @@ model County {
   code        String      @unique
   name        String
   subcounties Subcounty[]
+  userAssignments Assignment[] @relation("AssignmentCounty")
   createdAt   DateTime    @default(now())
   updatedAt   DateTime    @updatedAt
 }
@@ -160,6 +179,7 @@ model Subcounty {
   countyId  String
   county    County   @relation(fields: [countyId], references: [id])
   wards     Ward[]
+  userAssignments Assignment[] @relation("AssignmentSubcounty")
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
 
@@ -175,6 +195,10 @@ model Ward {
   employees            Employee[]
   attendanceSessions   AttendanceSession[]
   workLogs             WorkLog[]
+  employeeAssignments  EmployeeAssignment[]
+  attendanceRecords    Attendance[]
+  absenceRequests      AbsenceRequest[]
+  userAssignments      Assignment[] @relation("AssignmentWard")
   createdAt   DateTime  @default(now())
   updatedAt   DateTime  @updatedAt
 
@@ -198,6 +222,8 @@ model User {
   assignments        Assignment[]
   auditEvents        AuditEvent[]   @relation("AuditActor")
   capabilities       UserCapability[]
+  accessRequestsTargeted AccessRequest[] @relation("AccessRequestTarget")
+  accessRequestsReviewed AccessRequest[] @relation("AccessRequestReviewer")
 }
 
 model Role {
@@ -206,6 +232,7 @@ model Role {
   name         String
   capabilities RoleCapability[]
   assignments  Assignment[]
+  permissionsManagedAt DateTime?
 }
 
 model Capability {
@@ -248,6 +275,9 @@ model Assignment {
   createdAt   DateTime  @default(now())
   user        User      @relation(fields: [userId], references: [id], onDelete: Cascade)
   role        Role      @relation(fields: [roleId], references: [id])
+  county      County?   @relation("AssignmentCounty", fields: [countyId], references: [id], onDelete: Restrict)
+  subcounty   Subcounty? @relation("AssignmentSubcounty", fields: [subcountyId], references: [id], onDelete: Restrict)
+  ward        Ward?     @relation("AssignmentWard", fields: [wardId], references: [id], onDelete: Restrict)
 
   @@unique([userId, roleId, scopeType, countyId, subcountyId, wardId])
   @@index([userId])
@@ -285,6 +315,8 @@ model AccessRequest {
   reviewNote       String?
   createdAt        DateTime            @default(now())
   reviewedAt       DateTime?
+  targetUser       User?               @relation("AccessRequestTarget", fields: [targetUserId], references: [id], onDelete: SetNull)
+  reviewer         User?               @relation("AccessRequestReviewer", fields: [reviewedBy], references: [id], onDelete: SetNull)
 
   @@index([email])
   @@index([status])
@@ -302,6 +334,7 @@ model Employee {
   email          String?
   designation    String               @default("Green Army Staff")
   active         Boolean              @default(true)
+  deactivatedAt  DateTime?
   wardId         String
   ward           Ward                 @relation(fields: [wardId], references: [id])
   profile        EmployeeProfile?
@@ -330,9 +363,11 @@ model EmployeeAssignment {
   id         String    @id @default(cuid())
   employeeId String
   wardId     String
+  kind       EmployeeAssignmentKind @default(TEMPORARY)
   assignedAt DateTime  @default(now())
   endedAt    DateTime?
   employee   Employee  @relation(fields: [employeeId], references: [id], onDelete: Cascade)
+  ward       Ward      @relation(fields: [wardId], references: [id], onDelete: Restrict)
 
   @@index([employeeId])
   @@index([wardId])
@@ -373,6 +408,7 @@ model Attendance {
   longitude          Decimal?         @db.Decimal(9, 6)
   employee           Employee         @relation(fields: [employeeId], references: [id])
   session            AttendanceSession @relation(fields: [sessionId], references: [id])
+  ward               Ward              @relation(fields: [wardId], references: [id], onDelete: Restrict)
 
   @@unique([employeeId, workDate])
   @@index([wardId, workDate])
@@ -400,6 +436,7 @@ model AbsenceRequest {
   createdAt   DateTime          @default(now())
   reviewedAt  DateTime?
   employee    Employee          @relation(fields: [employeeId], references: [id])
+  ward        Ward              @relation(fields: [wardId], references: [id], onDelete: Restrict)
   documents   Document[]
   deliveries  ReminderDelivery[]
 
@@ -476,6 +513,7 @@ model Evidence {
   uploadedBy  String
   createdAt   DateTime      @default(now())
   workLog     WorkLog       @relation(fields: [workLogId], references: [id], onDelete: Cascade)
+  reportEvidence ReportEvidence[]
 
   @@index([workLogId])
 }
@@ -540,6 +578,7 @@ model ReportEvidence {
   caption    String?
   stage      EvidenceStage
   report     Report        @relation(fields: [reportId], references: [id], onDelete: Cascade)
+  sourceEvidence Evidence? @relation(fields: [evidenceId], references: [id], onDelete: SetNull)
 
   @@index([reportId])
 }

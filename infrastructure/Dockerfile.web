@@ -1,6 +1,10 @@
 # Multi-stage build for the Next.js web app (standalone output).
 FROM node:24-bookworm-slim AS build
-RUN corepack enable && corepack prepare pnpm@8.15.9 --activate
+RUN apt-get update \
+  && apt-get install -y --no-install-recommends openssl \
+  && rm -rf /var/lib/apt/lists/* \
+  && corepack enable \
+  && corepack prepare pnpm@8.15.9 --activate
 WORKDIR /app
 
 COPY . .

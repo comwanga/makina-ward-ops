@@ -1,5 +1,5 @@
 import { z } from "zod";
-import { idSchema } from "./common";
+import { idSchema, isoDateSchema, optionalPaginationSchema, strictBooleanSchema } from "./common";
 
 export const absenceKinds = [
   "ANNUAL_LEAVE",
@@ -15,11 +15,11 @@ export const createAbsenceSchema = z
   .object({
     employeeId: z.string().cuid(),
     kind: z.enum(absenceKinds),
-    startDate: z.string().regex(/^\d{4}-\d{2}-\d{2}$/),
-    endDate: z.string().regex(/^\d{4}-\d{2}-\d{2}$/),
-    returnDate: z.string().regex(/^\d{4}-\d{2}-\d{2}$/),
+    startDate: isoDateSchema,
+    endDate: isoDateSchema,
+    returnDate: isoDateSchema,
     reason: z.string().trim().max(2000).default(""),
-    planned: z.boolean().default(false),
+    planned: strictBooleanSchema.default(false),
     documentCategory: z
       .enum([
         "SICK_SHEET",
@@ -39,15 +39,18 @@ export const createAbsenceSchema = z
 
 export const absenceActionSchema = z.object({
   action: z.enum(["SUBMIT", "APPROVE", "REJECT", "CANCEL"]),
+  expectedVersion: z.number().int().positive(),
   reviewNote: z.string().trim().max(2000).default(""),
 });
 
-export const absenceQuerySchema = z.object({
+export const absenceQuerySchema = optionalPaginationSchema.extend({
   wardId: idSchema.optional(),
   status: z
     .enum(["PLANNED", "SUBMITTED", "APPROVED", "REJECTED", "CANCELLED"])
     .optional(),
   employeeId: idSchema.optional(),
+  fromDate: isoDateSchema.optional(),
+  toDate: isoDateSchema.optional(),
 });
 
 export const documentCategorySchema = z.enum([

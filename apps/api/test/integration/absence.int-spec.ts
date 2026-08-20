@@ -1,4 +1,4 @@
-import { afterAll, beforeAll, beforeEach, describe, expect, it } from "vitest";
+import { afterAll, beforeAll, beforeEach, describe, expect, it, vi } from "vitest";
 import type { NestFastifyApplication } from "@nestjs/platform-fastify";
 import { PrismaClient } from "@ward-ops/database";
 import { testConfig } from "./test-config";
@@ -154,7 +154,7 @@ describe("absence management (integration)", () => {
       url: `/api/v1/absence-requests/${id}/actions`,
       cookie: session.cookie,
       csrf: session.csrf,
-      payload,
+      payload: { expectedVersion: 1, ...payload },
     });
     return { status: response.statusCode, body: response.json() };
   }
@@ -264,6 +264,21 @@ describe("absence management (integration)", () => {
     expect(status).toBe(201);
     expect((result as Record<string, any>).status).toBe("APPROVED");
     expect((result as Record<string, any>).reviewedBy).toBeTruthy();
+  });
+
+  it("rejects a stale absence transition version", async () => {
+    const { body } = await createAbsence({
+      employeeId,
+      kind: "ANNUAL_LEAVE",
+      startDate: addDays(todayNairobi(), 10),
+      endDate: addDays(todayNairobi(), 11),
+      returnDate: addDays(todayNairobi(), 12),
+      reason: "Versioned leave request",
+    });
+    const id = (body as Record<string, any>).id;
+    const stale = await action(id, { action: "APPROVE", expectedVersion: 2 }, reviewer);
+    expect(stale.status).toBe(409);
+    expect((await prisma.absenceRequest.findUniqueOrThrow({ where: { id } })).status).toBe("SUBMITTED");
   });
 
   it("rejects a submitted request with a note", async () => {
@@ -616,10 +631,17 @@ describe("absence management (integration)", () => {
       strict: false,
     });
     const first = await reminders.processReminders();
+    (reminders as unknown as { transporter: { sendMail: ReturnType<typeof vi.fn> } }).transporter = {
+      sendMail: vi.fn().mockResolvedValue({ messageId: "sent" }),
+    };
     const second = await reminders.processReminders();
+    const auditCount = await prisma.auditEvent.count({ where: { action: "ABSENCE.REMINDERS_PROCESSED" } });
+    const third = await reminders.processReminders();
 
     expect(first).toBe(1);
-    expect(second).toBe(0);
+    expect(second).toBe(1);
+    expect(third).toBe(0);
+    expect(await prisma.auditEvent.count({ where: { action: "ABSENCE.REMINDERS_PROCESSED" } })).toBe(auditCount);
 
     const deliveries = await prisma.reminderDelivery.findMany({
       where: { absenceRequestId: created.id },
@@ -627,6 +649,6 @@ describe("absence management (integration)", () => {
     expect(deliveries).toHaveLength(1);
     expect(deliveries[0].reminderDays).toBe(7);
     expect(deliveries[0].recipient).toBe("absentee@makina.test");
-    expect(deliveries[0].status).toBe("PENDING");
+    expect(deliveries[0].status).toBe("SENT");
   });
 });

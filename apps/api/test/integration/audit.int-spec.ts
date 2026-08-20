@@ -19,17 +19,20 @@ describe("audit history (integration)", () => {
 
   let makinaWard: { id: string; code: string };
   let nccCounty: { id: string };
+  let kibraSubcounty: { id: string };
   let likoniSubcounty: { id: string };
 
   let officer: { cookie: string | null; csrf: string | null };
   let admin: { cookie: string | null; csrf: string | null };
   let likoniReviewer: { cookie: string | null; csrf: string | null };
+  let makinaReviewer: { cookie: string | null; csrf: string | null };
 
   beforeAll(async () => {
     prisma = new PrismaClient();
     app = await buildApp(testConfig(TEST_DB_URL));
     makinaWard = await prisma.ward.findUniqueOrThrow({ where: { code: "MAKINA" } });
     nccCounty = await prisma.county.findUniqueOrThrow({ where: { code: "NCC" } });
+    kibraSubcounty = await prisma.subcounty.findUniqueOrThrow({ where: { code: "KIBRA" } });
     likoniSubcounty = await prisma.subcounty.findUniqueOrThrow({ where: { code: "LIKONI" } });
   });
 
@@ -72,6 +75,16 @@ describe("audit history (integration)", () => {
       scopeId: likoniSubcounty.id,
     });
     likoniReviewer = await login(app, "reviewer@likoni.test", PASSWORD);
+
+    await createUserWithAssignment(prisma, {
+      email: "reviewer@kibra.test",
+      password: PASSWORD,
+      displayName: "Kibra Reviewer",
+      roleCode: "SUBCOUNTY_REVIEWER",
+      scopeType: "SUBCOUNTY",
+      scopeId: kibraSubcounty.id,
+    });
+    makinaReviewer = await login(app, "reviewer@kibra.test", PASSWORD);
   });
 
   it("requires the AUDIT_READ capability", async () => {
@@ -136,5 +149,41 @@ describe("audit history (integration)", () => {
     const body = listResponse.json();
     const actions = body.items.map((event: { action: string }) => event.action);
     expect(actions).not.toContain("EMPLOYEE.CREATED");
+  });
+
+  it("filters and paginates in scope with actor names while hiding IPs from non-admins", async () => {
+    const actor = await prisma.user.findUniqueOrThrow({ where: { email: "officer@makina.test" } });
+    await prisma.auditEvent.createMany({
+      data: Array.from({ length: 3 }, (_, index) => ({
+        action: "TEST.SQL_FILTER",
+        targetType: "Regression",
+        targetId: `target-${index}`,
+        scopeType: "WARD" as const,
+        scopeId: makinaWard.id,
+        actorUserId: actor.id,
+        sourceIp: `10.0.0.${index + 1}`,
+      })),
+    });
+
+    const scoped = await api(app, {
+      method: "GET",
+      url: "/api/v1/audit?action=TEST.SQL_FILTER&page=2&pageSize=1",
+      cookie: makinaReviewer.cookie,
+    });
+    expect(scoped.statusCode).toBe(200);
+    const body = scoped.json();
+    expect(body.total).toBe(3);
+    expect(body.page).toBe(2);
+    expect(body.items).toHaveLength(1);
+    expect(body.items[0].actorDisplayName).toBe("Ward Officer");
+    expect(body.items[0]).not.toHaveProperty("sourceIp");
+
+    const adminList = await api(app, {
+      method: "GET",
+      url: "/api/v1/audit?action=TEST.SQL_FILTER&pageSize=1",
+      cookie: admin.cookie,
+    });
+    expect(adminList.statusCode).toBe(200);
+    expect(adminList.json().items[0].sourceIp).toMatch(/^10\.0\.0\./);
   });
 });

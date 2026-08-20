@@ -3,8 +3,10 @@
 import { FormEvent, useCallback, useEffect, useRef, useState } from "react";
 import { useRouter } from "next/navigation";
 import { BrandLogo } from "@/components/BrandLogo";
+import { ConfirmDialog } from "@/components/ConfirmDialog";
 import { DashNav } from "@/components/DashNav";
-import { Absence, AbsenceAction, AbsenceDocument, AbsenceKind, ApiError, Employee, Ward, absenceAction, createAbsence, downloadAbsenceDocument, fetchMe, listAbsences, listStaff, listWards, uploadAbsenceDocument } from "@/lib/api";
+import { StatusMessages } from "@/components/StatusMessages";
+import { Absence, AbsenceAction, AbsenceDocument, AbsenceKind, ApiError, Employee, Ward, absenceAction, apiErrorMessage, createAbsence, downloadAbsenceDocument, fetchMe, listAbsences, listStaff, listWards, uploadAbsenceDocument } from "@/lib/api";
 import { compressImage } from "@/lib/image";
 
 const KINDS: AbsenceKind[] = [
@@ -60,6 +62,8 @@ export default function AbsencesPage() {
   const [submitting, setSubmitting] = useState(false);
   const [uploading, setUploading] = useState(false);
   const [uploadProgress, setUploadProgress] = useState<number | null>(null);
+  const [loading, setLoading] = useState(true);
+  const [pendingAction, setPendingAction] = useState<{ absence: Absence; action: AbsenceAction } | null>(null);
   const [form, setForm] = useState({
     employeeId: "",
     kind: "ANNUAL_LEAVE" as AbsenceKind,
@@ -84,6 +88,10 @@ export default function AbsencesPage() {
         return;
       }
       setMe(current);
+      if (!current.capabilities.includes("ABSENCE_READ")) {
+        router.replace("/dashboard");
+        return;
+      }
       const [absenceList, staff, accessible] = await Promise.all([
         listAbsences(),
         listStaff(),
@@ -96,8 +104,10 @@ export default function AbsencesPage() {
       if (err instanceof ApiError && err.status === 401) {
         router.push("/login");
       } else {
-        setError(err instanceof ApiError ? err.message : "Unable to load absences");
+        setError(apiErrorMessage(err, "Unable to load absences"));
       }
+    } finally {
+      setLoading(false);
     }
   }, [router]);
 
@@ -116,28 +126,28 @@ export default function AbsencesPage() {
       setForm((current) => ({ ...current, reason: "" }));
       setAbsences(await listAbsences());
     } catch (err) {
-      setError(err instanceof ApiError ? err.message : "Unable to create absence");
+      setError(apiErrorMessage(err, "Unable to create absence"));
     } finally {
       setSubmitting(false);
     }
   }
 
-  async function onAction(absence: Absence, action: AbsenceAction) {
+  async function onAction(absence: Absence, action: AbsenceAction, reviewNote?: string) {
     setError(null);
     setNotice(null);
+    setPendingAction(null);
     try {
-      let reviewNote: string | undefined;
-      if (action === "REJECT") {
-        reviewNote = window.prompt("Rejection note (at least 3 characters)") ?? "";
-        if (!reviewNote.trim()) {
-          setError("A rejection note is required.");
-          return;
-        }
-      }
       await absenceAction(absence.id, { action, reviewNote });
+      const resultLabel: Record<AbsenceAction, string> = {
+        SUBMIT: "submitted",
+        APPROVE: "approved",
+        REJECT: "rejected",
+        CANCEL: "cancelled",
+      };
+      setNotice(`${absence.employee.fullName}'s request was ${resultLabel[action]}.`);
       setAbsences(await listAbsences());
     } catch (err) {
-      setError(err instanceof ApiError ? err.message : "Unable to update absence");
+      setError(apiErrorMessage(err, "Unable to update absence"));
     }
   }
 
@@ -161,7 +171,7 @@ export default function AbsencesPage() {
     } catch (err) {
       setUploading(false);
       setUploadProgress(null);
-      setError(err instanceof ApiError ? err.message : "Unable to upload document");
+      setError(apiErrorMessage(err, "Unable to upload document"));
     }
   }
 
@@ -171,7 +181,7 @@ export default function AbsencesPage() {
       const blob = await downloadAbsenceDocument(document.id);
       window.open(URL.createObjectURL(blob), "_blank");
     } catch (err) {
-      setError(err instanceof ApiError ? err.message : "Unable to open document");
+      setError(apiErrorMessage(err, "Unable to open document"));
     }
   }
 
@@ -189,7 +199,7 @@ export default function AbsencesPage() {
   };
 
   return (
-    <main className="dashboard">
+    <main className="dashboard" aria-busy={loading}>
       <header className="dash-header">
         <BrandLogo size={44} />
         <div className="dash-title">
@@ -199,11 +209,11 @@ export default function AbsencesPage() {
         <DashNav />
       </header>
 
+      <StatusMessages error={error} notice={notice} loading={loading ? "Loading absences..." : null} />
+
       {can("ABSENCE_MANAGE") && (
         <section className="panel">
           <h2>New absence request</h2>
-          {error && <p className="form-error">{error}</p>}
-          {notice && <p className="form-success">{notice}</p>}
           <form className="grid-form" onSubmit={onCreate}>
             <label>
               Employee
@@ -277,7 +287,7 @@ export default function AbsencesPage() {
               Planned (draft — not yet submitted)
             </label>
             <button type="submit" disabled={submitting}>
-              {submitting ? "Saving…" : "Create request"}
+              {submitting ? "Saving..." : "Create request"}
             </button>
           </form>
         </section>
@@ -286,10 +296,10 @@ export default function AbsencesPage() {
       <section className="panel">
         <h2>Absence requests</h2>
         {wards.length === 0 && <p className="empty">No wards are within your scope.</p>}
-        {absences.length === 0 ? (
+        {absences.length === 0 ? (!loading && (
           <p className="empty">No absence requests.</p>
-        ) : (
-          <table className="data-table">
+        )) : (
+          <div className="table-wrap"><table className="data-table">
             <thead>
               <tr>
                 <th>Employee</th>
@@ -320,29 +330,26 @@ export default function AbsencesPage() {
                     )}
                   </td>
                   <td>
-                    {absence.documents.length === 0 ? (
+                    {absence.documents.filter((document) => document.sensitivity !== "MEDICAL" || can("MEDICAL_READ")).length === 0 ? (
                       <span className="muted-text">—</span>
                     ) : (
                       <div className="doc-list">
-                        {absence.documents.map((document) => (
-                          <a
+                        {absence.documents.filter((document) => document.sensitivity !== "MEDICAL" || can("MEDICAL_READ")).map((document) => (
+                          <button
                             key={document.id}
                             className="link-btn"
-                            href="#"
-                            onClick={(e) => {
-                              e.preventDefault();
-                              void onOpenDocument(document);
-                            }}
+                            type="button"
+                            onClick={() => void onOpenDocument(document)}
                           >
                             {document.category.toLowerCase()}
-                          </a>
+                          </button>
                         ))}
                       </div>
                     )}
                   </td>
                   <td>
                     <div className="doc-actions">
-                      {can("ABSENCE_MANAGE") && (
+                       {can("ABSENCE_MANAGE") && (absence.kind !== "SICK_OFF" || can("MEDICAL_READ")) && (
 <DocumentUploadRow
                         absence={absence}
                         onUploaded={(file, category) => void onUploadDocument(absence, file, category)}
@@ -354,7 +361,8 @@ export default function AbsencesPage() {
                         <button
                           key={item.action}
                           className="link-btn"
-                          onClick={() => void onAction(absence, item.action)}
+                          type="button"
+                          onClick={() => setPendingAction({ absence, action: item.action })}
                         >
                           {item.label}
                         </button>
@@ -364,9 +372,24 @@ export default function AbsencesPage() {
                 </tr>
               ))}
             </tbody>
-          </table>
+          </table></div>
         )}
       </section>
+      {!can("MEDICAL_READ") && absences.some((absence) => absence.documents.some((document) => document.sensitivity === "MEDICAL")) && (
+        <p className="privacy-notice">Medical attachments are hidden because your account does not have medical-record access.</p>
+      )}
+      {can("MEDICAL_READ") && (
+        <p className="privacy-notice">Medical documents are restricted records. Access is logged and should be limited to official duties.</p>
+      )}
+      <ConfirmDialog
+        open={Boolean(pendingAction)}
+        title={`${pendingAction?.action ? pendingAction.action.charAt(0) + pendingAction.action.slice(1).toLowerCase() : "Update"} absence request?`}
+        description={pendingAction ? `This will update the request for ${pendingAction.absence.employee.fullName}.` : ""}
+        confirmLabel={pendingAction?.action ? pendingAction.action.charAt(0) + pendingAction.action.slice(1).toLowerCase() : "Confirm"}
+        requireText={pendingAction?.action === "REJECT"}
+        onCancel={() => setPendingAction(null)}
+        onConfirm={(text) => pendingAction && void onAction(pendingAction.absence, pendingAction.action, text || undefined)}
+      />
     </main>
   );
 }
@@ -394,7 +417,7 @@ function DocumentUploadRow({
         aria-label="Document category"
         disabled={uploading}
       >
-        {DOCUMENT_CATEGORIES.map((item) => (
+        {DOCUMENT_CATEGORIES.filter((item) => absence.kind === "SICK_OFF" || !["SICK_SHEET", "MEDICAL_CERTIFICATE", "RETURN_TO_WORK"].includes(item)).map((item) => (
           <option key={item} value={item}>
             {item.toLowerCase()}
           </option>
@@ -409,11 +432,12 @@ function DocumentUploadRow({
         onChange={(e) => onUploaded(e.target.files?.[0] ?? null, category)}
       />
       <button
+        type="button"
         className="link-btn"
         onClick={() => inputRef.current?.click()}
         disabled={uploading}
       >
-        {uploading ? (uploadProgress !== null ? `uploading ${uploadProgress}%` : "preparing…") : "Upload"}
+        {uploading ? (uploadProgress !== null ? `uploading ${uploadProgress}%` : "preparing...") : "Upload"}
       </button>
     </>
   );

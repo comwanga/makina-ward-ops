@@ -1,11 +1,13 @@
 import {
   BadRequestException,
+  ConflictException,
   Injectable,
   NotFoundException,
 } from "@nestjs/common";
 import { createHash } from "node:crypto";
 import { Prisma } from "@ward-ops/database";
 import type { EvidenceStage } from "@ward-ops/contracts";
+import type { EvidenceListInput } from "@ward-ops/validation";
 import { PrismaService } from "../prisma/prisma.service";
 import { AuditService } from "../audit/audit.service";
 import { AuthContext } from "../auth/auth-context";
@@ -88,14 +90,8 @@ export class EvidenceService {
     if (!(await this.scope.wardAccessible(auth, workLog.wardId))) {
       throw new NotFoundException("Work log not found");
     }
-
-    const count = await this.prisma.client.evidence.count({
-      where: { workLogId, stage },
-    });
-    if (count >= EVIDENCE_MAX_PER_STAGE) {
-      throw new BadRequestException(
-        `A work log can hold at most ${EVIDENCE_MAX_PER_STAGE} ${stage.toLowerCase()} photos`,
-      );
+    if (workLog.status !== "SUBMITTED") {
+      throw new ConflictException("Evidence cannot be changed after terminal review");
     }
 
     // §23 pipeline: signature validation, orientation normalization, resize,
@@ -108,29 +104,43 @@ export class EvidenceService {
     });
 
     try {
-      const evidence = await this.prisma.client.evidence.create({
-        data: {
-          workLogId,
-          objectKey: stored.objectKey,
-          stage,
-          caption: caption?.trim() || null,
-          contentType: processed.contentType,
-          size: stored.size,
-          sha256: stored.sha256,
-          uploadedBy: auth.userId,
-        },
-        include: { workLog: true },
-      });
-      await this.audit.record({
-        action: "WORK_LOG.EVIDENCE_UPLOADED",
-        targetType: "Evidence",
-        targetId: evidence.id,
-        scopeType: "WARD",
-        scopeId: workLog.wardId,
-        actorUserId: auth.userId,
-        sourceIp: meta.sourceIp,
-        requestId: meta.requestId,
-        details: `${stage} ${processed.contentType} ${stored.size} bytes`,
+      const evidence = await this.prisma.client.$transaction(async (tx) => {
+        await tx.$executeRaw`SELECT pg_advisory_xact_lock(hashtext(${`work-log:${workLogId}`}))`;
+        const current = await tx.workLog.findUnique({ where: { id: workLogId } });
+        if (!current || current.status !== "SUBMITTED") {
+          throw new ConflictException("Evidence cannot be changed after terminal review");
+        }
+        const count = await tx.evidence.count({ where: { workLogId, stage } });
+        if (count >= EVIDENCE_MAX_PER_STAGE) {
+          throw new BadRequestException(
+            `A work log can hold at most ${EVIDENCE_MAX_PER_STAGE} ${stage.toLowerCase()} photos`,
+          );
+        }
+        const created = await tx.evidence.create({
+          data: {
+            workLogId,
+            objectKey: stored.objectKey,
+            stage,
+            caption: caption?.trim() || null,
+            contentType: processed.contentType,
+            size: stored.size,
+            sha256: stored.sha256,
+            uploadedBy: auth.userId,
+          },
+          include: { workLog: true },
+        });
+        await this.audit.record({
+          action: "WORK_LOG.EVIDENCE_UPLOADED",
+          targetType: "Evidence",
+          targetId: created.id,
+          scopeType: "WARD",
+          scopeId: workLog.wardId,
+          actorUserId: auth.userId,
+          sourceIp: meta.sourceIp,
+          requestId: meta.requestId,
+          details: `${stage} ${processed.contentType} ${stored.size} bytes`,
+        }, tx);
+        return created;
       });
       return this.toSummary(evidence);
     } catch (error) {
@@ -143,7 +153,8 @@ export class EvidenceService {
 
   // -- Reads -----------------------------------------------------------------
 
-  async list(auth: AuthContext, workLogId: string): Promise<EvidenceSummary[]> {
+  async list(auth: AuthContext, query: EvidenceListInput): Promise<EvidenceSummary[]> {
+    const { workLogId } = query;
     const workLog = await this.prisma.client.workLog.findUnique({
       where: { id: workLogId },
     });
@@ -155,9 +166,11 @@ export class EvidenceService {
     }
 
     const evidence = await this.prisma.client.evidence.findMany({
-      where: { workLogId },
+      where: { workLogId, stage: query.stage },
       include: { workLog: true },
       orderBy: { createdAt: "asc" },
+      skip: query.page ? (query.page - 1) * (query.pageSize ?? 25) : undefined,
+      take: query.page || query.pageSize ? query.pageSize ?? 25 : undefined,
     });
     return evidence.map((item) => this.toSummary(item));
   }

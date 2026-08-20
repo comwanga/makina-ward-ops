@@ -4,21 +4,25 @@ import { FormEvent, useCallback, useEffect, useState } from "react";
 import { useRouter } from "next/navigation";
 import { BrandLogo } from "@/components/BrandLogo";
 import { DashNav } from "@/components/DashNav";
+import { StatusMessages } from "@/components/StatusMessages";
 import {
   ApiError,
+  AuthUser,
+  apiErrorMessage,
   OrganisationCounty,
   Report,
   ReportKind,
   ReportPreview,
   ReportScopeType,
   ReportSummary,
+  downloadReportEvidence,
   downloadReportCsv,
   draftReportNarrative,
   fetchMe,
   fetchOrganisationTree,
   fetchReport,
   finalizeReport,
-  listReports,
+  listReportsPage,
   previewReport,
 } from "@/lib/api";
 
@@ -67,15 +71,18 @@ function flattenScopes(counties: OrganisationCounty[]): ScopeOption[] {
 
 export default function ReportsPage() {
   const router = useRouter();
-  const [me, setMe] = useState<{ capabilities: string[] } | null>(null);
+  const [me, setMe] = useState<(AuthUser & { capabilities: string[] }) | null>(null);
   const [scopes, setScopes] = useState<ScopeOption[]>([]);
   const [reports, setReports] = useState<ReportSummary[]>([]);
+  const [reportPage, setReportPage] = useState(1);
+  const [reportTotal, setReportTotal] = useState(0);
   const [selected, setSelected] = useState<Report | null>(null);
   const [preview, setPreview] = useState<ReportPreview | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [notice, setNotice] = useState<string | null>(null);
   const [submitting, setSubmitting] = useState(false);
   const [drafting, setDrafting] = useState(false);
+  const [loading, setLoading] = useState(true);
   const [form, setForm] = useState({
     scopeId: "",
     startDate: nairobiToday(),
@@ -86,6 +93,7 @@ export default function ReportsPage() {
   });
 
   const can = (capability: string) => me?.capabilities.includes(capability) ?? false;
+  const canExport = can("REPORTS_EXPORT");
 
   const load = useCallback(async () => {
     try {
@@ -99,6 +107,10 @@ export default function ReportsPage() {
         return;
       }
       setMe(current);
+      if (!current.capabilities.includes("REPORTS_READ")) {
+        router.replace("/dashboard");
+        return;
+      }
       const counties = await fetchOrganisationTree();
       const options = flattenScopes(counties);
       setScopes(options);
@@ -106,15 +118,19 @@ export default function ReportsPage() {
         ...currentForm,
         scopeId: currentForm.scopeId || options[0]?.scopeId || "",
       }));
-      setReports(await listReports());
+      const archive = await listReportsPage({ page: reportPage, pageSize: 25 });
+      setReports(archive.items);
+      setReportTotal(archive.total);
     } catch (err) {
       if (err instanceof ApiError && err.status === 401) {
         router.push("/login");
       } else {
-        setError(err instanceof ApiError ? err.message : "Unable to load reports");
+        setError(apiErrorMessage(err, "Unable to load reports"));
       }
+    } finally {
+      setLoading(false);
     }
-  }, [router]);
+  }, [reportPage, router]);
 
   useEffect(() => {
     void load();
@@ -135,6 +151,7 @@ export default function ReportsPage() {
     setNotice(null);
     try {
       const result = await previewReport(periodInput);
+      setSelected(null);
       setPreview(result);
       setForm((current) => ({
         ...current,
@@ -142,7 +159,7 @@ export default function ReportsPage() {
         recommendations: result.recommendations,
       }));
     } catch (err) {
-      setError(err instanceof ApiError ? err.message : "Unable to build preview");
+      setError(apiErrorMessage(err, "Unable to build preview"));
     }
   }
 
@@ -158,9 +175,12 @@ export default function ReportsPage() {
       });
       setNotice(`Finalized ${created.title}.`);
       setSelected(created);
-      setReports(await listReports());
+      setReportPage(1);
+      const archive = await listReportsPage({ page: 1, pageSize: 25 });
+      setReports(archive.items);
+      setReportTotal(archive.total);
     } catch (err) {
-      setError(err instanceof ApiError ? err.message : "Unable to finalize report");
+      setError(apiErrorMessage(err, "Unable to finalize report"));
     } finally {
       setSubmitting(false);
     }
@@ -181,10 +201,10 @@ export default function ReportsPage() {
       setNotice(
         draft.narrativeSource === "ai"
           ? "AI narrative draft generated."
-          : "AI narrative unavailable — used deterministic fallback.",
+          : "AI narrative unavailable. A deterministic fallback was used.",
       );
     } catch (err) {
-      setError(err instanceof ApiError ? err.message : "Unable to draft narrative");
+      setError(apiErrorMessage(err, "Unable to draft narrative"));
     } finally {
       setDrafting(false);
     }
@@ -193,9 +213,11 @@ export default function ReportsPage() {
   async function onOpen(report: ReportSummary) {
     setError(null);
     try {
-      setSelected(await fetchReport(report.id));
+      const opened = await fetchReport(report.id);
+      setPreview(null);
+      setSelected(opened);
     } catch (err) {
-      setError(err instanceof ApiError ? err.message : "Unable to open report");
+      setError(apiErrorMessage(err, "Unable to open report"));
     }
   }
 
@@ -208,16 +230,35 @@ export default function ReportsPage() {
       link.download = `mazingira-${report.kind.toLowerCase()}-${report.periodStart}.csv`;
       link.click();
     } catch (err) {
-      setError(err instanceof ApiError ? err.message : "Unable to export report");
+      setError(apiErrorMessage(err, "Unable to export report"));
     }
   }
 
-  const snapshot = preview?.snapshot ?? selected?.snapshot ?? null;
+  async function onOpenEvidence(accessPath?: string) {
+    if (!accessPath) {
+      setError("This report photo is not available from the finalized evidence archive.");
+      return;
+    }
+    setError(null);
+    const viewer = window.open("about:blank", "_blank", "noopener,noreferrer");
+    try {
+      const blob = await downloadReportEvidence(accessPath);
+      const objectUrl = URL.createObjectURL(blob);
+      if (viewer) viewer.location.href = objectUrl;
+      else window.location.href = objectUrl;
+      window.setTimeout(() => URL.revokeObjectURL(objectUrl), 60_000);
+    } catch (err) {
+      viewer?.close();
+      setError(apiErrorMessage(err, "Unable to open report evidence"));
+    }
+  }
+
+  const snapshot = selected?.snapshot ?? preview?.snapshot ?? null;
   const narrative = selected ? selected.narrative : form.narrative;
   const recommendations = selected ? selected.recommendations : form.recommendations;
 
   return (
-    <main className="dashboard">
+    <main className="dashboard" aria-busy={loading}>
       <header className="dash-header">
         <BrandLogo size={44} />
         <div className="dash-title">
@@ -227,17 +268,16 @@ export default function ReportsPage() {
         <DashNav />
       </header>
 
-      {error && <p className="form-error">{error}</p>}
-      {notice && <p className="form-success">{notice}</p>}
+      <StatusMessages error={error} notice={notice} loading={loading ? "Loading reports..." : null} />
 
-      <section className="panel">
+      {can("REPORTS_GENERATE") && <section className="panel">
         <h2>Build a report</h2>
         <form className="grid-form" onSubmit={onPreview}>
           <label>
             Scope
             <select
               value={form.scopeId}
-              onChange={(e) => setForm({ ...form, scopeId: e.target.value })}
+              onChange={(e) => { setForm({ ...form, scopeId: e.target.value }); setPreview(null); setSelected(null); }}
               required
             >
               <option value="">Select scope…</option>
@@ -252,7 +292,7 @@ export default function ReportsPage() {
             Period type
             <select
               value={form.kind}
-              onChange={(e) => setForm({ ...form, kind: e.target.value as ReportKind })}
+              onChange={(e) => { setForm({ ...form, kind: e.target.value as ReportKind }); setPreview(null); setSelected(null); }}
             >
               {KINDS.map((kind) => (
                 <option key={kind} value={kind}>
@@ -266,7 +306,7 @@ export default function ReportsPage() {
             <input
               type="date"
               value={form.startDate}
-              onChange={(e) => setForm({ ...form, startDate: e.target.value })}
+              onChange={(e) => { setForm({ ...form, startDate: e.target.value }); setPreview(null); setSelected(null); }}
               required
             />
           </label>
@@ -275,19 +315,19 @@ export default function ReportsPage() {
             <input
               type="date"
               value={form.endDate}
-              onChange={(e) => setForm({ ...form, endDate: e.target.value })}
+              onChange={(e) => { setForm({ ...form, endDate: e.target.value }); setPreview(null); setSelected(null); }}
               required
             />
           </label>
           <button type="submit">Preview report</button>
         </form>
-      </section>
+      </section>}
 
       {preview && !selected && (
         <section className="panel">
-          <h2>Draft — {preview.title}</h2>
+          <h2>Draft: {preview.title}</h2>
           <p className="muted-text">
-            Period {formatDate(preview.snapshot.startDate)} –{" "}
+            Period {formatDate(preview.snapshot.startDate)} to{" "}
             {formatDate(preview.snapshot.endDate)} · {preview.snapshot.scopeName}
           </p>
           <TotalsBar totals={preview.snapshot.totals} />
@@ -306,7 +346,7 @@ export default function ReportsPage() {
               onClick={() => void onAiDraft()}
               disabled={drafting}
             >
-              {drafting ? "Drafting…" : "Draft narrative with AI"}
+              {drafting ? "Drafting..." : "Draft narrative with AI"}
             </button>
           )}
           <label>
@@ -318,19 +358,19 @@ export default function ReportsPage() {
             />
           </label>
           {can("REPORTS_FINALIZE") && (
-            <button onClick={() => void onFinalize()} disabled={submitting}>
-              {submitting ? "Finalizing…" : "Finalize report"}
+            <button type="button" onClick={() => void onFinalize()} disabled={submitting}>
+              {submitting ? "Finalizing..." : "Finalize report"}
             </button>
           )}
         </section>
       )}
 
       {selected && snapshot && (
-        <section className="panel">
+        <section className="panel report-output">
           <h2>{selected.title}</h2>
           <p className="muted-text">
             <span className={`badge finalized`}>FINALIZED</span>{" "}
-            {formatDate(snapshot.startDate)} – {formatDate(snapshot.endDate)} ·{" "}
+            {formatDate(snapshot.startDate)} to {formatDate(snapshot.endDate)} ·{" "}
             {snapshot.scopeName} · version {selected.version}
             {snapshot.signedBy ? ` · Signed by ${snapshot.signedBy} (${snapshot.signedTitle})` : ""}
           </p>
@@ -347,26 +387,29 @@ export default function ReportsPage() {
           </p>
           <div className="doc-actions">
             <button
+              type="button"
               className="link-btn"
               onClick={() => {
                 setSelected(null);
                 setPreview(null);
               }}
             >
-              ← Back
+              Back
             </button>
-            <button className="link-btn" onClick={() => window.print()}>
+            <button type="button" className="link-btn" onClick={() => window.print()}>
               Print / PDF
             </button>
-            <button className="link-btn" onClick={() => void onCsv(selected)}>
-              Export CSV
-            </button>
+            {canExport && (
+              <button type="button" className="link-btn" onClick={() => void onCsv(selected)}>
+                Export CSV
+              </button>
+            )}
           </div>
           <h3>Daily roster snapshot</h3>
           {snapshot.days.length === 0 ? (
             <p className="empty">No attendance days in this period.</p>
           ) : (
-            <table className="data-table">
+            <div className="table-wrap"><table className="data-table">
               <thead>
                 <tr>
                   <th>Date</th>
@@ -396,13 +439,13 @@ export default function ReportsPage() {
                   }),
                 )}
               </tbody>
-            </table>
+            </table></div>
           )}
           <h3>Approved work</h3>
           {snapshot.workLogs.length === 0 ? (
             <p className="empty">No approved work logs in this period.</p>
           ) : (
-            <table className="data-table">
+            <div className="table-wrap"><table className="data-table">
               <thead>
                 <tr>
                   <th>Date</th>
@@ -421,21 +464,38 @@ export default function ReportsPage() {
                     <td>{workLog.activity}</td>
                     <td>{workLog.location}</td>
                     <td>{workLog.numberOfTrips}</td>
-                    <td>{workLog.photos.length}</td>
+                    <td>
+                      {workLog.photos.length === 0 ? (
+                        <span className="muted-text">None</span>
+                      ) : (
+                        <div className="doc-list">
+                          {workLog.photos.map((photo, index) => (
+                            <button
+                              type="button"
+                              className="link-btn"
+                              key={photo.accessPath ?? photo.evidenceId}
+                              onClick={() => void onOpenEvidence(photo.accessPath)}
+                            >
+                              {photo.stage.toLowerCase()} {index + 1}
+                            </button>
+                          ))}
+                        </div>
+                      )}
+                    </td>
                   </tr>
                 ))}
               </tbody>
-            </table>
+            </table></div>
           )}
         </section>
       )}
 
       <section className="panel">
         <h2>Finalized reports</h2>
-        {reports.length === 0 ? (
+        {reports.length === 0 ? (!loading && (
           <p className="empty">No finalized reports yet.</p>
-        ) : (
-          <table className="data-table">
+        )) : (
+          <div className="table-wrap"><table className="data-table">
             <thead>
               <tr>
                 <th>Title</th>
@@ -450,24 +510,37 @@ export default function ReportsPage() {
                 <tr key={report.id}>
                   <td>{report.title}</td>
                   <td>
-                    {formatDate(report.periodStart)} – {formatDate(report.periodEnd)}
+                    {formatDate(report.periodStart)} to {formatDate(report.periodEnd)}
                   </td>
                   <td>{report.kind.toLowerCase()}</td>
                   <td>{report.finalizedAt ? formatDate(report.finalizedAt.slice(0, 10)) : "—"}</td>
                   <td>
                     <div className="doc-actions">
-                      <button className="link-btn" onClick={() => void onOpen(report)}>
+                      <button type="button" className="link-btn" onClick={() => void onOpen(report)}>
                         View
                       </button>
-                      <button className="link-btn" onClick={() => void onCsv(report)}>
-                        CSV
-                      </button>
+                      {canExport && (
+                        <button type="button" className="link-btn" onClick={() => void onCsv(report)}>
+                          CSV
+                        </button>
+                      )}
                     </div>
                   </td>
                 </tr>
               ))}
             </tbody>
-          </table>
+          </table></div>
+        )}
+        {reportTotal > 25 && (
+          <div className="pagination" aria-label="Report archive pages">
+            <button type="button" disabled={reportPage === 1 || loading} onClick={() => setReportPage((value) => value - 1)}>
+              Previous
+            </button>
+            <span>Page {reportPage} of {Math.ceil(reportTotal / 25)}</span>
+            <button type="button" disabled={reportPage * 25 >= reportTotal || loading} onClick={() => setReportPage((value) => value + 1)}>
+              Next
+            </button>
+          </div>
         )}
       </section>
     </main>

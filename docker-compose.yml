@@ -2,45 +2,51 @@ services:
   db:
     image: postgres:16-alpine
     environment:
-      POSTGRES_DB: makina
-      POSTGRES_USER: makina
+      POSTGRES_DB: ward_ops
+      POSTGRES_USER: ward_ops
       POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?Set POSTGRES_PASSWORD}
+    ports:
+      - "5432:5432"
     volumes:
       - postgres_data:/var/lib/postgresql/data
     healthcheck:
-      test: ["CMD-SHELL", "pg_isready -U makina"]
+      test: ["CMD-SHELL", "pg_isready -U ward_ops"]
       interval: 10s
       timeout: 5s
       retries: 5
 
-  web:
-    build: .
+  api:
+    build:
+      context: .
+      dockerfile: Dockerfile
     environment:
-      DATABASE_URL: postgresql+psycopg://makina:${POSTGRES_PASSWORD}@db:5432/makina
-      APP_ENV: production
-      PUBLIC_BASE_URL: ${PUBLIC_BASE_URL:?Set PUBLIC_BASE_URL}
-      SECURE_COOKIES: "true"
-      BOOTSTRAP_ADMIN_EMAIL: ${BOOTSTRAP_ADMIN_EMAIL:?Set BOOTSTRAP_ADMIN_EMAIL}
-      BOOTSTRAP_ADMIN_PASSWORD: ${BOOTSTRAP_ADMIN_PASSWORD:?Set BOOTSTRAP_ADMIN_PASSWORD}
-      DOCUMENT_ROOT: /app/data/documents
-      SMTP_HOST: ${SMTP_HOST:-}
-      SMTP_PORT: ${SMTP_PORT:-587}
-      SMTP_USERNAME: ${SMTP_USERNAME:-}
-      SMTP_PASSWORD: ${SMTP_PASSWORD:-}
-      SMTP_FROM: ${SMTP_FROM:-makina-ward@example.go.ke}
-      AI_ENABLED: ${AI_ENABLED:-false}
-      AI_BASE_URL: ${AI_BASE_URL:-https://api.groq.com/openai/v1}
-      AI_API_KEY: ${AI_API_KEY:-}
-      AI_MODEL: ${AI_MODEL:-llama-3.1-8b-instant}
-    ports:
-      - "8000:8000"
+      NODE_ENV: production
+      APP_ENV: development
+      PORT: 4000
+      DATABASE_URL: postgresql://ward_ops:${POSTGRES_PASSWORD}@db:5432/ward_ops
+      OWNER_SETUP_TOKEN: ${OWNER_SETUP_TOKEN:?Set OWNER_SETUP_TOKEN}
+      PUBLIC_BASE_URL: ${PUBLIC_BASE_URL:-http://localhost:3000}
+      SECURE_COOKIES: "false"
+      DOCUMENT_STORE_DIR: /app/data/objects
     volumes:
-      - documents:/app/data/documents
+      - document_data:/app/data/objects
+    ports:
+      - "4000:4000"
     depends_on:
       db:
         condition: service_healthy
-    restart: unless-stopped
+
+  web:
+    build:
+      context: .
+      dockerfile: infrastructure/Dockerfile.web
+      args:
+        NEXT_PUBLIC_API_URL: http://api:4000/api/v1
+    ports:
+      - "3000:3000"
+    depends_on:
+      - api
 
 volumes:
   postgres_data:
-  documents:
+  document_data:

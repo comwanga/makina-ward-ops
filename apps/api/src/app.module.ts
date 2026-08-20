@@ -12,6 +12,7 @@ import { AbsenceModule } from "./absence/absence.module";
 import { WorkLogModule } from "./work-log/work-log.module";
 import { EvidenceModule } from "./evidence/evidence.module";
 import { ReportModule } from "./report/report.module";
+import { DashboardModule } from "./dashboard/dashboard.module";
 import { RequestLoggingMiddleware } from "./common/request-logging.middleware";
 
 @Module({
@@ -29,6 +30,7 @@ import { RequestLoggingMiddleware } from "./common/request-logging.middleware";
     WorkLogModule,
     EvidenceModule,
     ReportModule,
+    DashboardModule,
   ],
 })
 export class AppModule implements NestModule {

@@ -178,6 +178,8 @@ export class WorkLogService {
       where,
       include: { detail: true, operations: true },
       orderBy: [{ workDate: "desc" }, { createdAt: "desc" }],
+      skip: query.page ? (query.page - 1) * (query.pageSize ?? 25) : undefined,
+      take: query.page || query.pageSize ? query.pageSize ?? 25 : undefined,
     });
     return workLogs.map((workLog) => this.toSummary(workLog));
   }
@@ -207,6 +209,9 @@ export class WorkLogService {
     if (!required || !auth.capabilities.includes(required)) {
       throw new ForbiddenException("You do not have permission for this action");
     }
+    if (workLog.version !== input.expectedVersion) {
+      throw new ConflictException("Work log changed; reload it before taking action");
+    }
 
     const next = nextWorkLogStatus(workLog.status, input.action);
     if (!next) {
@@ -219,27 +224,37 @@ export class WorkLogService {
       throw new BadRequestException("A rejection note is required");
     }
 
-    const updated = await this.prisma.client.workLog.update({
-      where: { id },
-      data: {
-        status: next as WorkLogStatus,
-        version: { increment: 1 },
-        reviewedBy: auth.userId,
-        reviewedAt: new Date(),
-        reviewNote: input.reviewNote.trim() || null,
-      },
-      include: { detail: true, operations: true },
-    });
-    await this.audit.record({
-      action: ACTION_AUDIT[input.action],
-      targetType: "WorkLog",
-      targetId: id,
-      scopeType: "WARD",
-      scopeId: updated.wardId,
-      actorUserId: auth.userId,
-      sourceIp: meta.sourceIp,
-      requestId: meta.requestId,
-      details: `${workLog.status} -> ${next}`,
+    const updated = await this.prisma.client.$transaction(async (tx) => {
+      await tx.$executeRaw`SELECT pg_advisory_xact_lock(hashtext(${`work-log:${id}`}))`;
+      const result = await tx.workLog.updateMany({
+        where: { id, version: input.expectedVersion, status: workLog.status },
+        data: {
+          status: next as WorkLogStatus,
+          version: { increment: 1 },
+          reviewedBy: auth.userId,
+          reviewedAt: new Date(),
+          reviewNote: input.reviewNote.trim() || null,
+        },
+      });
+      if (result.count === 0) {
+        throw new ConflictException("Work log changed; reload it before taking action");
+      }
+      const reviewed = await tx.workLog.findUniqueOrThrow({
+        where: { id },
+        include: { detail: true, operations: true },
+      });
+      await this.audit.record({
+        action: ACTION_AUDIT[input.action],
+        targetType: "WorkLog",
+        targetId: id,
+        scopeType: "WARD",
+        scopeId: reviewed.wardId,
+        actorUserId: auth.userId,
+        sourceIp: meta.sourceIp,
+        requestId: meta.requestId,
+        details: `${workLog.status} -> ${next}`,
+      }, tx);
+      return reviewed;
     });
     return this.toSummary(updated);
   }

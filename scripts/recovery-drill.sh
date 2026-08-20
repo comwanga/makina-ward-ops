@@ -17,6 +17,17 @@ set -euo pipefail
 # Exits non-zero if any step of the recovery chain fails.
 
 DATABASE_URL="${DATABASE_URL:?DATABASE_URL must point to a scratch database}"
+RECOVERY_DRILL_CONFIRM="${RECOVERY_DRILL_CONFIRM:-}"
+DB_PATH="${DATABASE_URL%%\?*}"
+DB_NAME="${DB_PATH##*/}"
+if [[ "$RECOVERY_DRILL_CONFIRM" != "DROP-$DB_NAME" ]]; then
+  echo "Refusing destructive recovery drill. Set RECOVERY_DRILL_CONFIRM=DROP-$DB_NAME." >&2
+  exit 2
+fi
+if [[ ! "$DB_NAME" =~ (test|scratch|drill) ]] || [[ "$DATABASE_URL" =~ (railway|production|prod) ]]; then
+  echo "Refusing recovery drill for non-scratch database '$DB_NAME'." >&2
+  exit 2
+fi
 REPO_ROOT="$(cd "$(dirname "$0")/.." && pwd)"
 BACKUP_DIR="$(mktemp -d /tmp/makina-recovery-XXXXXX)"
 WORK_DIR="$(mktemp -d /tmp/makina-recovery-work-XXXXXX)"

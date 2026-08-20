@@ -166,6 +166,7 @@ export class S3ObjectStorage extends ObjectStorage {
         Key: this.key(objectKey),
         Body: input.buffer,
         ContentType: input.contentType,
+        ServerSideEncryption: "AES256",
       }),
     );
     return {

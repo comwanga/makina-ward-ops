@@ -18,6 +18,10 @@ async function main(): Promise<void> {
     if (user.assignments.length !== 1) {
       throw new Error("Expected one assignment for the drill officer");
     }
+    const roleCapabilities = await prisma.roleCapability.count();
+    if (roleCapabilities === 0) {
+      throw new Error("Expected seeded role capabilities after restore");
+    }
 
     const employee = await prisma.employee.findUniqueOrThrow({
       where: { phone: "0799888777" },

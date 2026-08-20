@@ -3,6 +3,7 @@ import type { FastifyRequest } from "fastify";
 import {
   attendanceQuerySchema,
   checkInSchema,
+  correctAttendanceSchema,
   createAttendanceSessionSchema,
   manualAttendanceSchema,
   rosterQuerySchema,
@@ -43,6 +44,34 @@ export class AttendanceController {
     return this.attendance.getSession(auth!, id);
   }
 
+  @RequireCapability("ATTENDANCE_MANAGE")
+  @HttpCode(HttpStatus.OK)
+  @Post("sessions/:id/close")
+  closeSession(
+    @Param("id") id: string,
+    @CurrentUser() auth: AuthContext | undefined,
+    @Req() request: FastifyRequest,
+  ) {
+    return this.attendance.closeSession(auth!, id, false, {
+      sourceIp: request.ip,
+      requestId: request.headers["x-request-id"] as string | undefined,
+    });
+  }
+
+  @RequireCapability("ATTENDANCE_MANAGE")
+  @HttpCode(HttpStatus.OK)
+  @Post("sessions/:id/revoke")
+  revokeSession(
+    @Param("id") id: string,
+    @CurrentUser() auth: AuthContext | undefined,
+    @Req() request: FastifyRequest,
+  ) {
+    return this.attendance.closeSession(auth!, id, true, {
+      sourceIp: request.ip,
+      requestId: request.headers["x-request-id"] as string | undefined,
+    });
+  }
+
   @Public()
   @HttpCode(HttpStatus.OK)
   @Post("sessions/:token/check-in")
@@ -63,6 +92,22 @@ export class AttendanceController {
   ) {
     const input = manualAttendanceSchema.parse(body);
     return this.attendance.manual(auth!, input, {
+      sourceIp: request.ip,
+      requestId: request.headers["x-request-id"] as string | undefined,
+    });
+  }
+
+  @RequireCapability("ATTENDANCE_MANAGE")
+  @HttpCode(HttpStatus.OK)
+  @Post(":id/corrections")
+  correct(
+    @Param("id") id: string,
+    @Body() body: unknown,
+    @CurrentUser() auth: AuthContext | undefined,
+    @Req() request: FastifyRequest,
+  ) {
+    const input = correctAttendanceSchema.parse(body);
+    return this.attendance.correct(auth!, id, input, {
       sourceIp: request.ip,
       requestId: request.headers["x-request-id"] as string | undefined,
     });

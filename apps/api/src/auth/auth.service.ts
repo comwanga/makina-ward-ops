@@ -17,7 +17,7 @@ export interface AuthUserSummary {
   displayName: string;
   active: boolean;
   mustChangePassword: boolean;
-  assignments: AuthAssignment[];
+  assignments: Array<Omit<AuthAssignment, "capabilities">>;
 }
 
 export interface LoginResult {

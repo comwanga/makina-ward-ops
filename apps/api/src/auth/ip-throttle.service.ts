@@ -23,6 +23,7 @@ export class IpThrottleService {
     const entry = this.buckets.get(key);
     if (!entry || now - entry.windowStart >= windowMs) {
       this.buckets.set(key, { count: 1, windowStart: now });
+      this.prune();
       return;
     }
     entry.count += 1;

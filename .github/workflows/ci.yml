@@ -97,6 +97,7 @@ jobs:
     runs-on: ubuntu-latest
     env:
       POSTGRES_PASSWORD: ci
+      OWNER_SETUP_TOKEN: ci-owner-setup-token
     steps:
       - uses: actions/checkout@v4
 

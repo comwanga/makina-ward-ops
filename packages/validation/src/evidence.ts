@@ -1,10 +1,11 @@
 import { z } from "zod";
-import { idSchema } from "./common";
+import { idSchema, optionalPaginationSchema } from "./common";
 
 export const evidenceStageSchema = z.enum(["BEFORE", "DURING", "AFTER"]);
 
-export const evidenceListSchema = z.object({
+export const evidenceListSchema = optionalPaginationSchema.extend({
   workLogId: idSchema,
+  stage: evidenceStageSchema.optional(),
 });
 
 export const evidenceMetaSchema = z.object({

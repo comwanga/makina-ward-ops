@@ -27,7 +27,6 @@ async function main(): Promise<void> {
       prisma.employee.deleteMany(),
       prisma.assignment.deleteMany(),
       prisma.userCapability.deleteMany(),
-      prisma.roleCapability.deleteMany(),
       prisma.userSession.deleteMany(),
       prisma.accessRequest.deleteMany(),
       prisma.auditEvent.deleteMany(),

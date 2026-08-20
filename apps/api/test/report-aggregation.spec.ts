@@ -13,6 +13,7 @@ import {
   isWeekend,
   reportTitle,
   samplePeriodPhotos,
+  signerTitle,
   structuredAiPayload,
 } from "../src/report/report-aggregation";
 
@@ -67,6 +68,18 @@ describe("report aggregation (§25, §26, ADR-0007)", () => {
       expect(sampled.filter((item) => item.stage === "BEFORE")).toHaveLength(4);
       expect(sampled.filter((item) => item.stage === "AFTER")).toHaveLength(4);
       expect(sampled).toHaveLength(8);
+    });
+  });
+
+  describe("signer titles", () => {
+    it("uses fixed titles that match the assigned role", () => {
+      expect(signerTitle(["SYSTEM_ADMIN"])).toBe("System Administrator");
+      expect(signerTitle(["SUBCOUNTY_REVIEWER"])).toBe("Subcounty Reviewer");
+      expect(signerTitle(["WARD_OFFICER"])).toBe("Ward Environment Officer");
+    });
+
+    it("selects a title deterministically for multiple assignments", () => {
+      expect(signerTitle(["WARD_OFFICER", "SYSTEM_ADMIN"])).toBe("System Administrator");
     });
   });
 

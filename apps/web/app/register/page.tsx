@@ -1,30 +1,74 @@
 "use client";
 
-import { FormEvent, useState } from "react";
 import Link from "next/link";
+import { FormEvent, useEffect, useState } from "react";
 import { BrandLogo } from "@/components/BrandLogo";
-import { ApiError, requestAccess } from "@/lib/api";
+import { StatusMessages } from "@/components/StatusMessages";
+import {
+  apiErrorMessage,
+  listPublicOrganisations,
+  PublicOrganisationTree,
+  requestAccess,
+} from "@/lib/api";
+
+type ScopeOption = { type: "COUNTY" | "SUBCOUNTY" | "WARD"; id: string; label: string };
+
+function scopeOptions(tree: PublicOrganisationTree): ScopeOption[] {
+  return tree.counties.flatMap((county) => [
+    { type: "COUNTY" as const, id: county.id, label: county.name },
+    ...county.subcounties.flatMap((subcounty) => [
+      {
+        type: "SUBCOUNTY" as const,
+        id: subcounty.id,
+        label: `${subcounty.name} Sub-County`,
+      },
+      ...subcounty.wards.map((ward) => ({
+        type: "WARD" as const,
+        id: ward.id,
+        label: `${ward.name} Ward`,
+      })),
+    ]),
+  ]);
+}
 
 export default function RegisterPage() {
-  const [form, setForm] = useState({
-    displayName: "",
-    email: "",
-    password: "",
-    reason: "",
-  });
+  const [options, setOptions] = useState<ScopeOption[]>([]);
+  const [scopeKey, setScopeKey] = useState("");
+  const [form, setForm] = useState({ displayName: "", email: "", password: "", reason: "" });
   const [error, setError] = useState<string | null>(null);
-  const [done, setDone] = useState(false);
+  const [notice, setNotice] = useState<string | null>(null);
   const [submitting, setSubmitting] = useState(false);
+
+  useEffect(() => {
+    void listPublicOrganisations()
+      .then((tree) => {
+        const next = scopeOptions(tree);
+        setOptions(next);
+        setScopeKey(next[0] ? `${next[0].type}:${next[0].id}` : "");
+      })
+      .catch((cause) => setError(apiErrorMessage(cause, "Unable to load organisation scopes")));
+  }, []);
 
   async function onSubmit(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
+    const selected = options.find((option) => `${option.type}:${option.id}` === scopeKey);
+    if (!selected) {
+      setError("Select the organisation scope where you will work.");
+      return;
+    }
     setError(null);
+    setNotice(null);
     setSubmitting(true);
     try {
-      await requestAccess(form);
-      setDone(true);
-    } catch (err) {
-      setError(err instanceof ApiError ? err.message : "Unable to submit request");
+      await requestAccess({
+        ...form,
+        requestedScope: selected.type,
+        requestedScopeId: selected.id,
+      });
+      setNotice("Your access request was submitted for administrator review.");
+      setForm({ displayName: "", email: "", password: "", reason: "" });
+    } catch (cause) {
+      setError(apiErrorMessage(cause, "Unable to submit the access request"));
     } finally {
       setSubmitting(false);
     }
@@ -36,62 +80,62 @@ export default function RegisterPage() {
         <BrandLogo size={96} priority />
         <p className="eyebrow">NAIROBI CITY COUNTY</p>
         <h1>Request access</h1>
-        <p className="subtitle">Benchmark visitors can request read-only access</p>
+        <p className="subtitle">Access is issued for a specific county, subcounty, or ward.</p>
 
-        {done ? (
-          <div className="auth-form">
-            <p className="form-success">
-              Request received. The owner will review it under User access.
-            </p>
-            <p className="auth-links">
-              <Link href="/login">Back to sign in</Link>
-            </p>
-          </div>
-        ) : (
-          <form className="auth-form" onSubmit={onSubmit}>
-            <label htmlFor="displayName">Full name</label>
-            <input
-              id="displayName"
-              type="text"
-              autoComplete="name"
-              value={form.displayName}
-              onChange={(event) => setForm({ ...form, displayName: event.target.value })}
-              minLength={2}
-              required
-            />
-            <label htmlFor="email">Email</label>
-            <input
-              id="email"
-              type="email"
-              autoComplete="username"
-              value={form.email}
-              onChange={(event) => setForm({ ...form, email: event.target.value })}
-              required
-            />
-            <label htmlFor="password">Password</label>
-            <input
-              id="password"
-              type="password"
-              autoComplete="new-password"
-              value={form.password}
-              onChange={(event) => setForm({ ...form, password: event.target.value })}
-              minLength={12}
-              required
-            />
-            <label htmlFor="reason">Reason for access</label>
-            <textarea
-              id="reason"
-              value={form.reason}
-              onChange={(event) => setForm({ ...form, reason: event.target.value })}
-              minLength={5}
-              required
-            />
-            {error && <p className="form-error">{error}</p>}
-            <button type="submit" disabled={submitting}>
-              {submitting ? "Submitting…" : "Submit request"}
-            </button>
-          </form>
-        )}
+        <form className="auth-form" onSubmit={onSubmit}>
+          <label htmlFor="display-name">Full name</label>
+          <input
+            id="display-name"
+            value={form.displayName}
+            onChange={(event) => setForm((current) => ({ ...current, displayName: event.target.value }))}
+            required
+          />
+          <label htmlFor="email">Official email</label>
+          <input
+            id="email"
+            type="email"
+            autoComplete="email"
+            value={form.email}
+            onChange={(event) => setForm((current) => ({ ...current, email: event.target.value }))}
+            required
+          />
+          <label htmlFor="password">Temporary password</label>
+          <input
+            id="password"
+            type="password"
+            autoComplete="new-password"
+            minLength={12}
+            value={form.password}
+            onChange={(event) => setForm((current) => ({ ...current, password: event.target.value }))}
+            required
+          />
+          <label htmlFor="scope">Requested organisation scope</label>
+          <select
+            id="scope"
+            value={scopeKey}
+            onChange={(event) => setScopeKey(event.target.value)}
+            disabled={!options.length}
+            required
+          >
+            {!options.length && <option value="">Loading scopes...</option>}
+            {options.map((option) => (
+              <option key={`${option.type}:${option.id}`} value={`${option.type}:${option.id}`}>
+                {option.label}
+              </option>
+            ))}
+          </select>
+          <label htmlFor="reason">Reason for access</label>
+          <textarea
+            id="reason"
+            value={form.reason}
+            onChange={(event) => setForm((current) => ({ ...current, reason: event.target.value }))}
+            required
+          />
+          <StatusMessages error={error} notice={notice} />
+          <button type="submit" disabled={submitting || !options.length}>
+            {submitting ? "Submitting..." : "Submit request"}
+          </button>
+        </form>
 
         <p className="auth-links">
           <Link href="/login">Sign in</Link>
