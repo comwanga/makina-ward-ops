@@ -1,6 +1,7 @@
 import { CanActivate, ExecutionContext, ForbiddenException, Injectable } from "@nestjs/common";
 import { Reflector } from "@nestjs/core";
 import type { FastifyRequest } from "fastify";
+import type { CapabilityCode } from "@ward-ops/contracts";
 import { IS_PUBLIC_KEY } from "../common/public.decorator";
 import { REQUIRED_CAPABILITIES_KEY } from "./capability.decorator";
 import { readAuthContext } from "../auth/auth-context";
@@ -18,7 +19,7 @@ export class CapabilitiesGuard implements CanActivate {
       return true;
     }
 
-    const required = this.reflector.getAllAndOverride<string[]>(REQUIRED_CAPABILITIES_KEY, [
+    const required = this.reflector.getAllAndOverride<CapabilityCode[]>(REQUIRED_CAPABILITIES_KEY, [
       context.getHandler(),
       context.getClass(),
     ]);
@@ -31,11 +32,13 @@ export class CapabilitiesGuard implements CanActivate {
     if (!auth) {
       throw new ForbiddenException("Not permitted");
     }
-    const granted = new Set(auth.capabilities);
-    const missing = required.filter((capability) => !granted.has(capability as never));
-    if (missing.length > 0) {
+    const matchingAssignment = auth.assignments.some((assignment) =>
+      required.every((capability) => assignment.capabilities.includes(capability)),
+    );
+    if (!matchingAssignment) {
       throw new ForbiddenException("You do not have permission for this action");
     }
+    auth.requiredCapabilities = required;
     return true;
   }
 }

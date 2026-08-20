@@ -24,8 +24,8 @@ export const accessRequestSchema = z.object({
   email: emailSchema,
   password: passwordSchema,
   reason: z.string().trim().min(5, "A short reason is required").max(2000),
-  requestedScope: scopeTypeSchema.optional(),
-  requestedScopeId: idSchema.optional(),
+  requestedScope: scopeTypeSchema,
+  requestedScopeId: idSchema,
 });
 
 export const accessRequestDecisionSchema = z

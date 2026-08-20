@@ -1,4 +1,5 @@
-import { Injectable, Logger } from "@nestjs/common";
+import { Injectable } from "@nestjs/common";
+import { Prisma } from "@ward-ops/database";
 import type { ScopeType } from "@ward-ops/contracts";
 import { PrismaService } from "../prisma/prisma.service";
 import { ScopeService } from "../authorization/scope.service";
@@ -21,13 +22,14 @@ export interface AuditEventSummary {
   id: string;
   occurredAt: Date;
   actorUserId: string | null;
+  actorDisplayName: string | null;
   action: string;
   targetType: string;
   targetId: string | null;
   scopeType: ScopeType | null;
   scopeId: string | null;
   details: string | null;
-  sourceIp: string | null;
+  sourceIp?: string | null;
 }
 
 export interface AuditListResult {
@@ -39,19 +41,14 @@ export interface AuditListResult {
 
 @Injectable()
 export class AuditService {
-  private readonly logger = new Logger("Audit");
-
   constructor(
     private readonly prisma: PrismaService,
     private readonly scope: ScopeService,
   ) {}
 
-  async record(input: AuditRecordInput): Promise<void> {
-    try {
-      await this.prisma.client.auditEvent.create({ data: input });
-    } catch (error) {
-      this.logger.error(`Failed to persist audit event (${input.action})`, String(error));
-    }
+  async record(input: AuditRecordInput, transaction?: Prisma.TransactionClient): Promise<void> {
+    const client = transaction ?? this.prisma.client;
+    await client.auditEvent.create({ data: input });
   }
 
   /**
@@ -63,39 +60,53 @@ export class AuditService {
     const { wardIds, subcountyIds, countyIds } = await this.scope.accessibleScopeIds(auth);
     const isSystemAdmin = auth.assignments.some((assignment) => assignment.role === "SYSTEM_ADMIN");
 
-    const events = await this.prisma.client.auditEvent.findMany({
-      where: query.action ? { action: query.action } : undefined,
-      orderBy: { occurredAt: "desc" },
-      take: 2000,
-    });
-
-    const visible = events.filter((event) => {
-      if (!event.scopeType || !event.scopeId) return isSystemAdmin;
-      if (event.scopeType === "WARD") return wardIds.has(event.scopeId);
-      if (event.scopeType === "SUBCOUNTY") return subcountyIds.has(event.scopeId);
-      if (event.scopeType === "COUNTY") return countyIds.has(event.scopeId);
-      return false;
-    });
-
+    const visibleScopes: Prisma.AuditEventWhereInput[] = [];
+    if (wardIds.size) visibleScopes.push({ scopeType: "WARD", scopeId: { in: [...wardIds] } });
+    if (subcountyIds.size) {
+      visibleScopes.push({ scopeType: "SUBCOUNTY", scopeId: { in: [...subcountyIds] } });
+    }
+    if (countyIds.size) {
+      visibleScopes.push({ scopeType: "COUNTY", scopeId: { in: [...countyIds] } });
+    }
+    if (isSystemAdmin) {
+      visibleScopes.push({ OR: [{ scopeType: null }, { scopeId: null }] });
+    }
+    const where: Prisma.AuditEventWhereInput = {
+      AND: [
+        { OR: visibleScopes },
+        ...(query.action ? [{ action: query.action }] : []),
+      ],
+    };
     const page = query.page;
     const pageSize = query.pageSize;
-    const start = (page - 1) * pageSize;
+    if (!visibleScopes.length) return { items: [], page, pageSize, total: 0 };
+    const [total, events] = await this.prisma.client.$transaction([
+      this.prisma.client.auditEvent.count({ where }),
+      this.prisma.client.auditEvent.findMany({
+        where,
+        orderBy: [{ occurredAt: "desc" }, { id: "desc" }],
+        skip: (page - 1) * pageSize,
+        take: pageSize,
+        include: { actor: { select: { displayName: true } } },
+      }),
+    ]);
     return {
-      items: visible.slice(start, start + pageSize).map((event) => ({
+      items: events.map((event) => ({
         id: event.id,
         occurredAt: event.occurredAt,
         actorUserId: event.actorUserId,
+        actorDisplayName: event.actor?.displayName ?? null,
         action: event.action,
         targetType: event.targetType,
         targetId: event.targetId,
         scopeType: event.scopeType,
         scopeId: event.scopeId,
         details: event.details,
-        sourceIp: event.sourceIp,
+        ...(isSystemAdmin ? { sourceIp: event.sourceIp } : {}),
       })),
       page,
       pageSize,
-      total: visible.length,
+      total,
     };
   }
 }

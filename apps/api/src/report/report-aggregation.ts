@@ -3,6 +3,7 @@ import type {
   CompletionStatus,
   EvidenceStage,
   ReportKind,
+  RoleCode,
   ScopeType,
 } from "@ward-ops/contracts";
 import { ATTENDANCE_STATUSES } from "@ward-ops/contracts";
@@ -112,6 +113,36 @@ export function reportTitle(kind: ReportKind, scopeName: string): string {
   const label =
     kind === "CUSTOM" ? "Custom" : `${kind.charAt(0)}${kind.slice(1).toLowerCase()}`;
   return `${label} Operations Report — ${scopeName}`;
+}
+
+const SIGNER_TITLES: Record<RoleCode, string> = {
+  SYSTEM_ADMIN: "System Administrator",
+  SUBCOUNTY_REVIEWER: "Subcounty Reviewer",
+  CHIEF_SUBCOUNTY_OFFICER: "Chief Subcounty Environment Officer",
+  ASSISTANT_DIRECTOR: "Assistant Director of Environment",
+  DEPUTY_DIRECTOR: "Deputy Director of Environment",
+  DIRECTOR: "Director of Environment",
+  WARD_OFFICER: "Ward Environment Officer",
+  HR_VIEWER: "Human Resources Viewer",
+  READ_ONLY: "Read-only User",
+};
+
+const SIGNER_ROLE_PRIORITY: RoleCode[] = [
+  "SYSTEM_ADMIN",
+  "DIRECTOR",
+  "DEPUTY_DIRECTOR",
+  "ASSISTANT_DIRECTOR",
+  "CHIEF_SUBCOUNTY_OFFICER",
+  "SUBCOUNTY_REVIEWER",
+  "WARD_OFFICER",
+  "HR_VIEWER",
+  "READ_ONLY",
+];
+
+/** Returns a fixed title rather than rendering an untrusted or mismatched role label. */
+export function signerTitle(roles: readonly RoleCode[]): string {
+  const role = SIGNER_ROLE_PRIORITY.find((candidate) => roles.includes(candidate));
+  return role ? SIGNER_TITLES[role] : "Authorized Report Finalizer";
 }
 
 /**

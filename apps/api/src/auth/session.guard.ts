@@ -1,6 +1,7 @@
 import { CanActivate, ExecutionContext, ForbiddenException, Injectable, UnauthorizedException } from "@nestjs/common";
 import { Reflector } from "@nestjs/core";
 import type { FastifyRequest } from "fastify";
+import type { CapabilityCode } from "@ward-ops/contracts";
 import { PrismaService } from "../prisma/prisma.service";
 import { hashToken } from "../common/crypto";
 import { IS_PUBLIC_KEY } from "../common/public.decorator";
@@ -12,6 +13,16 @@ import {
 } from "./auth-context";
 
 const PASSWORD_CHANGE_EXEMPT = ["/auth/me", "/auth/change-password", "/auth/logout"];
+
+const SAFE_USER_CAPABILITIES: ReadonlySet<CapabilityCode> = new Set([
+  "STAFF_READ",
+  "ATTENDANCE_READ",
+  "WORK_READ",
+  "ABSENCE_READ",
+  "MEDICAL_READ",
+  "REPORTS_READ",
+  "AUDIT_READ",
+]);
 
 @Injectable()
 export class SessionAuthGuard implements CanActivate {
@@ -53,6 +64,24 @@ export class SessionAuthGuard implements CanActivate {
         session.user.active
       ) {
         mustChangePassword = session.user.mustChangePassword;
+        const userCapabilities = session.user.capabilities
+          .map((link) => link.capability.code)
+          .filter((code) => SAFE_USER_CAPABILITIES.has(code));
+        const assignments: AuthContext["assignments"] = session.user.assignments.map((assignment) => ({
+          id: assignment.id,
+          role: assignment.role.code as AuthContext["assignments"][number]["role"],
+          roleName: assignment.role.name,
+          scopeType: assignment.scopeType,
+          countyId: assignment.countyId,
+          subcountyId: assignment.subcountyId,
+          wardId: assignment.wardId,
+          capabilities: Array.from(new Set([
+            ...assignment.role.capabilities.map(
+              (link) => link.capability.code as AuthContext["capabilities"][number],
+            ),
+            ...userCapabilities,
+          ])),
+        }));
         const contextValue: AuthContext = {
           userId: session.userId,
           email: session.user.email,
@@ -60,22 +89,9 @@ export class SessionAuthGuard implements CanActivate {
           sessionId: session.id,
           csrfToken: session.csrfToken,
           capabilities: Array.from(
-            new Set([
-              ...session.user.assignments.flatMap((assignment) =>
-                assignment.role.capabilities.map((link) => link.capability.code as AuthContext["capabilities"][number]),
-              ),
-              ...session.user.capabilities.map((link) => link.capability.code as AuthContext["capabilities"][number]),
-            ]),
+            new Set(assignments.flatMap((assignment) => assignment.capabilities)),
           ),
-          assignments: session.user.assignments.map((assignment) => ({
-            id: assignment.id,
-            role: assignment.role.code as AuthContext["assignments"][number]["role"],
-            roleName: assignment.role.name,
-            scopeType: assignment.scopeType,
-            countyId: assignment.countyId,
-            subcountyId: assignment.subcountyId,
-            wardId: assignment.wardId,
-          })),
+          assignments,
         };
         setAuthContext(request, contextValue);
       }

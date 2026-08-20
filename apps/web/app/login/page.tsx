@@ -1,10 +1,11 @@
 "use client";
 
-import { FormEvent, useState } from "react";
+import { FormEvent, useEffect, useState } from "react";
 import { useRouter } from "next/navigation";
 import Link from "next/link";
 import { BrandLogo } from "@/components/BrandLogo";
-import { ApiError, login } from "@/lib/api";
+import { apiErrorMessage, fetchMe, login } from "@/lib/api";
+import { StatusMessages } from "@/components/StatusMessages";
 
 export default function LoginPage() {
   const router = useRouter();
@@ -13,16 +14,24 @@ export default function LoginPage() {
   const [error, setError] = useState<string | null>(null);
   const [submitting, setSubmitting] = useState(false);
 
+  useEffect(() => {
+    void fetchMe()
+      .then((user) => {
+        if (user) router.replace(user.mustChangePassword ? "/account/password" : "/dashboard");
+      })
+      .catch(() => undefined);
+  }, [router]);
+
   async function onSubmit(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
     setError(null);
     setSubmitting(true);
     try {
-      await login(email, password);
-      router.push("/worklogs");
+      const user = await login(email, password);
+      router.push(user.mustChangePassword ? "/account/password" : "/dashboard");
       router.refresh();
     } catch (err) {
-      setError(err instanceof ApiError ? err.message : "Unable to sign in");
+      setError(apiErrorMessage(err, "Unable to sign in"));
     } finally {
       setSubmitting(false);
     }
@@ -55,9 +64,9 @@ export default function LoginPage() {
             onChange={(event) => setPassword(event.target.value)}
             required
           />
-          {error && <p className="form-error">{error}</p>}
+          <StatusMessages error={error} />
           <button type="submit" disabled={submitting}>
-            {submitting ? "Signing in…" : "Sign in"}
+            {submitting ? "Signing in..." : "Sign in"}
           </button>
         </form>
 

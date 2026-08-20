@@ -44,6 +44,7 @@ export async function resetDatabase(databaseUrl: string): Promise<void> {
       prisma.auditEvent.deleteMany(),
       prisma.user.deleteMany(),
     ]);
+    await prisma.role.updateMany({ data: { permissionsManagedAt: null } });
 
     // Reference data (capabilities, roles, role capabilities, county ->
     // subcounty -> ward) is rebuilt after the deletes so a fresh, complete

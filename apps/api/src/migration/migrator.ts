@@ -29,7 +29,6 @@ import {
   DEFAULT_ABSENCE_KIND,
   DEFAULT_ABSENCE_STATUS,
   DEFAULT_ACCESS_REQUEST_STATUS,
-  DEFAULT_ATTENDANCE_STATUS,
   DEFAULT_COMPLETION_STATUS,
   DEFAULT_DELIVERY_STATUS,
   DEFAULT_DOCUMENT_CATEGORY,
@@ -148,6 +147,7 @@ export class LegacyMigrator {
 
   async run(legacyDb: string): Promise<MigrationReport> {
     const startedAt = new Date().toISOString();
+    let aborted = false;
     try {
       await this.resolveScope();
       await this.migrateUsers();
@@ -164,6 +164,7 @@ export class LegacyMigrator {
       await this.migrateReminderDeliveries();
       await this.migrateAuditEvents();
     } catch (error) {
+      aborted = true;
       this.notes.push(`Migration aborted: ${String(error)}`);
     }
 
@@ -175,7 +176,11 @@ export class LegacyMigrator {
       this.legacyDocRoot,
       referencedKeys,
     );
-    const success = Object.values(this.counts).every((c) => c.failed === 0);
+    const success =
+      !aborted &&
+      Object.values(this.counts).every((c) => c.failed === 0) &&
+      reconciliation.objectsWithoutMetadata.length === 0 &&
+      reconciliation.metadataWithoutObject.length === 0;
     return {
       tool: "legacy-migrator",
       legacyDb,
@@ -481,8 +486,11 @@ export class LegacyMigrator {
           this.fail("attendance", `attendance #${row.id}: unresolved employee or session`);
           continue;
         }
-        const status: AttendanceStatus =
-          ATTENDANCE_STATUS_MAP[row.status] ?? DEFAULT_ATTENDANCE_STATUS;
+        const status: AttendanceStatus | undefined = ATTENDANCE_STATUS_MAP[row.status];
+        if (!status) {
+          this.fail("attendance", `attendance #${row.id}: unknown status ${row.status}`);
+          continue;
+        }
         await this.prisma.$transaction(async (tx) => {
           const attendance = await tx.attendance.create({
             data: {

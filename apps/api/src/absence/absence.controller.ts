@@ -3,6 +3,7 @@ import {
   Body,
   Controller,
   Get,
+  Header,
   Param,
   Post,
   Query,
@@ -106,6 +107,7 @@ export class AbsenceController {
   }
 
   @RequireCapability("ABSENCE_READ")
+  @Header("Cache-Control", "private, no-store")
   @Get("documents/:documentId/download")
   async downloadDocument(
     @Param("documentId") documentId: string,

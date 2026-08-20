@@ -1,17 +1,15 @@
 import { z } from "zod";
-import { idSchema, paginationSchema, scopeTypeSchema } from "./common";
+import { idSchema, isoDateSchema, paginationSchema, scopeTypeSchema } from "./common";
 
 export const MAX_REPORT_SPAN_DAYS = 366;
-
-const dateStringSchema = z.string().regex(/^\d{4}-\d{2}-\d{2}$/, "Date must be YYYY-MM-DD");
 
 export const reportKindSchema = z.enum(["DAILY", "WEEKLY", "MONTHLY", "CUSTOM"]);
 
 const reportPeriodFields = {
   scopeType: scopeTypeSchema,
   scopeId: idSchema,
-  startDate: dateStringSchema,
-  endDate: dateStringSchema,
+  startDate: isoDateSchema,
+  endDate: isoDateSchema,
   kind: reportKindSchema,
 };
 
@@ -29,6 +27,14 @@ export const reportPreviewQuerySchema = z
         path: ["endDate"],
         code: "custom",
         message: `Report period cannot exceed ${MAX_REPORT_SPAN_DAYS} days`,
+      });
+    }
+    const maxKindSpan = value.kind === "DAILY" ? 0 : value.kind === "WEEKLY" ? 6 : value.kind === "MONTHLY" ? 31 : MAX_REPORT_SPAN_DAYS;
+    if (spanDays > maxKindSpan) {
+      ctx.addIssue({
+        path: ["endDate"],
+        code: "custom",
+        message: `${value.kind.toLowerCase()} reports cannot span more than ${maxKindSpan + 1} day(s)`,
       });
     }
   });
@@ -51,6 +57,14 @@ export const reportFinalizeSchema = z
         path: ["endDate"],
         code: "custom",
         message: `Report period cannot exceed ${MAX_REPORT_SPAN_DAYS} days`,
+      });
+    }
+    const maxKindSpan = value.kind === "DAILY" ? 0 : value.kind === "WEEKLY" ? 6 : value.kind === "MONTHLY" ? 31 : MAX_REPORT_SPAN_DAYS;
+    if (spanDays > maxKindSpan) {
+      ctx.addIssue({
+        path: ["endDate"],
+        code: "custom",
+        message: `${value.kind.toLowerCase()} reports cannot span more than ${maxKindSpan + 1} day(s)`,
       });
     }
   });

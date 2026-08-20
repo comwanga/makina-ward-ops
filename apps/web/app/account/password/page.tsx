@@ -3,7 +3,8 @@
 import { FormEvent, useCallback, useEffect, useState } from "react";
 import { useRouter } from "next/navigation";
 import { BrandLogo } from "@/components/BrandLogo";
-import { ApiError, changePassword, fetchMe } from "@/lib/api";
+import { ApiError, apiErrorMessage, changePassword, fetchMe } from "@/lib/api";
+import { StatusMessages } from "@/components/StatusMessages";
 
 export default function ChangePasswordPage() {
   const router = useRouter();
@@ -22,6 +23,8 @@ export default function ChangePasswordPage() {
     } catch (err) {
       if (err instanceof ApiError && err.status === 401) {
         router.push("/login");
+      } else {
+        setError(apiErrorMessage(err, "Unable to verify your session"));
       }
     }
   }, [router]);
@@ -40,10 +43,10 @@ export default function ChangePasswordPage() {
     setSubmitting(true);
     try {
       await changePassword(currentPassword, newPassword);
-      router.push("/");
+      router.push("/dashboard");
       router.refresh();
     } catch (err) {
-      setError(err instanceof ApiError ? err.message : "Unable to change password");
+      setError(apiErrorMessage(err, "Unable to change password"));
     } finally {
       setSubmitting(false);
     }
@@ -87,9 +90,9 @@ export default function ChangePasswordPage() {
             onChange={(event) => setConfirmPassword(event.target.value)}
             required
           />
-          {error && <p className="form-error">{error}</p>}
+          <StatusMessages error={error} />
           <button type="submit" disabled={submitting}>
-            {submitting ? "Saving…" : "Change password"}
+            {submitting ? "Saving..." : "Change password"}
           </button>
         </form>
       </section>

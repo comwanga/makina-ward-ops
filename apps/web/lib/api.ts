@@ -44,6 +44,14 @@ export class ApiError extends Error {
   }
 }
 
+export function apiErrorMessage(error: unknown, fallback: string): string {
+  if (!(error instanceof ApiError)) return fallback;
+  if (error.status === 401) return "Your session has expired. Sign in again.";
+  if (error.status === 403) return "Your account does not have permission to perform this action.";
+  if (error.status === 0) return "The service is unreachable. Check your connection and try again.";
+  return error.message;
+}
+
 interface ApiRequestOptions {
   method?: "GET" | "POST" | "PUT" | "PATCH" | "DELETE";
   body?: unknown;
@@ -125,6 +133,9 @@ export async function fetchMe(): Promise<MeResponse["user"]> {
 export async function logout(): Promise<void> {
   await apiFetch("/auth/logout", { method: "POST" });
   setCsrfToken(null);
+  if (typeof navigator !== "undefined") {
+    navigator.serviceWorker?.controller?.postMessage({ type: "PURGE_SESSION_CACHE" });
+  }
 }
 
 export async function changePassword(
@@ -137,16 +148,61 @@ export async function changePassword(
   });
 }
 
+export interface DashboardSnapshot {
+  asOf: string;
+  workDate: string;
+  metrics: {
+    activeStaff: number;
+    presentOrLateToday: number;
+    openSessions: number;
+    approvedAbsencesToday: number;
+    pendingAbsences: number;
+    pendingWorkLogs: number;
+    finalizedReports: number;
+  };
+  queue: Array<{
+    type: "ABSENCE" | "WORK_LOG";
+    id: string;
+    label: string;
+    detail: string;
+    href: string;
+  }>;
+}
+
+export async function fetchDashboard(): Promise<DashboardSnapshot> {
+  return apiFetch<DashboardSnapshot>("/dashboard");
+}
+
 export async function requestAccess(input: {
   displayName: string;
   email: string;
   password: string;
   reason: string;
+  requestedScope: ReportScopeType;
+  requestedScopeId: string;
 }): Promise<void> {
   await apiFetch("/users/access-requests", {
     method: "POST",
     body: input,
   });
+}
+
+export interface PublicOrganisationTree {
+  counties: Array<{
+    id: string;
+    code: string;
+    name: string;
+    subcounties: Array<{
+      id: string;
+      code: string;
+      name: string;
+      wards: Array<{ id: string; code: string; name: string }>;
+    }>;
+  }>;
+}
+
+export async function listPublicOrganisations(): Promise<PublicOrganisationTree> {
+  return apiFetch<PublicOrganisationTree>("/organisations/public");
 }
 
 export interface AccessRequest {
@@ -183,6 +239,73 @@ export async function reviewAccessRequest(
   });
 }
 
+export interface ManagedUserAssignment {
+  id: string;
+  roleCode: RoleCode;
+  roleName: string;
+  scopeType: ReportScopeType;
+  scopeId: string;
+}
+
+export interface ManagedUser {
+  id: string;
+  email: string;
+  displayName: string;
+  active: boolean;
+  mustChangePassword: boolean;
+  assignments: ManagedUserAssignment[];
+}
+
+export interface UserAssignmentInput {
+  roleCode: RoleCode;
+  scopeType: ReportScopeType;
+  scopeId: string;
+}
+
+export async function listUsers(): Promise<ManagedUser[]> {
+  const result = await apiFetch<{ users: ManagedUser[] }>("/users");
+  return result.users;
+}
+
+export async function updateUserAssignments(
+  id: string,
+  assignments: UserAssignmentInput[],
+): Promise<void> {
+  await apiFetch(`/users/${encodeURIComponent(id)}/assignments`, {
+    method: "PUT",
+    body: { assignments },
+  });
+}
+
+export async function setUserActive(id: string, active: boolean): Promise<void> {
+  await apiFetch(`/users/${encodeURIComponent(id)}/${active ? "restore" : "disable"}`, {
+    method: "POST",
+  });
+}
+
+export async function resetUserPassword(id: string, temporaryPassword: string): Promise<void> {
+  await apiFetch(`/users/${encodeURIComponent(id)}/reset-password`, {
+    method: "POST",
+    body: { temporaryPassword },
+  });
+}
+
+export interface PermissionCatalog {
+  capabilities: Array<{ code: string; name: string }>;
+  roles: Array<{ code: RoleCode; name: string; capabilities: string[] }>;
+}
+
+export async function fetchPermissionCatalog(): Promise<PermissionCatalog> {
+  return apiFetch<PermissionCatalog>("/users/permissions");
+}
+
+export async function updateRoleCapabilities(roleCode: RoleCode, capabilities: string[]): Promise<void> {
+  await apiFetch(`/users/roles/${encodeURIComponent(roleCode)}/capabilities`, {
+    method: "PUT",
+    body: { capabilities },
+  });
+}
+
 export async function bootstrapOwner(input: {
   setupToken: string;
   email: string;
@@ -202,13 +325,14 @@ export interface AuditEvent {
   id: string;
   occurredAt: string;
   actorUserId: string | null;
+  actorDisplayName: string | null;
   action: string;
   targetType: string;
   targetId: string | null;
   scopeType: string | null;
   scopeId: string | null;
   details: string | null;
-  sourceIp: string | null;
+  sourceIp?: string | null;
 }
 
 export interface AuditListResult {
@@ -263,8 +387,13 @@ export interface Employee {
   active: boolean;
   wardId: string;
   ward: WardRef;
-  profile: EmployeeProfile;
-  assignments: Array<{ id: string; wardId: string; designation: string }>;
+  profile: EmployeeProfile | null;
+  assignments: Array<{
+    id: string;
+    wardId: string;
+    assignedAt?: string;
+    endedAt?: string | null;
+  }>;
 }
 
 export interface CreateEmployeeInput {
@@ -282,6 +411,84 @@ export async function listStaff(): Promise<Employee[]> {
 
 export async function createStaff(input: CreateEmployeeInput): Promise<Employee> {
   return apiFetch<Employee>("/staff", { method: "POST", body: input });
+}
+
+export type UpdateEmployeeInput = Partial<
+  Pick<CreateEmployeeInput, "fullName" | "phone" | "designation">
+> & {
+  email?: string | null;
+  residence?: string | null;
+  rosterStatus?: "ON_DUTY" | "ANNUAL_LEAVE";
+};
+
+export async function updateStaff(id: string, input: UpdateEmployeeInput): Promise<Employee> {
+  return apiFetch<Employee>(`/staff/${encodeURIComponent(id)}`, {
+    method: "PATCH",
+    body: input,
+  });
+}
+
+export async function assignStaff(
+  id: string,
+  wardId: string,
+  type: "TEMPORARY" | "TRANSFER" = "TEMPORARY",
+): Promise<Employee> {
+  return apiFetch<Employee>(`/staff/${encodeURIComponent(id)}/assignments`, {
+    method: "POST",
+    body: { wardId, type },
+  });
+}
+
+export async function endStaffAssignment(id: string, assignmentId: string): Promise<Employee> {
+  return apiFetch<Employee>(
+    `/staff/${encodeURIComponent(id)}/assignments/${encodeURIComponent(assignmentId)}/end`,
+    { method: "POST" },
+  );
+}
+
+export interface StaffImportRowValue {
+  employeeNumber?: string;
+  fullName?: string;
+  phone?: string;
+  email?: string | null;
+  designation?: string;
+  residence?: string | null;
+  rosterStatus?: "ON_DUTY" | "ANNUAL_LEAVE";
+  [key: string]: unknown;
+}
+
+export interface StaffImportRow {
+  rowNumber: number;
+  status: "INVALID" | "DUPLICATE_FILE" | "CONFLICT" | "CREATE" | "UPDATE" | "SKIPPED";
+  value: StaffImportRowValue;
+  employeeId?: string;
+  errors?: string[];
+}
+
+export interface StaffImportResult {
+  importId?: string;
+  rows: StaffImportRow[];
+  summary: Record<string, number>;
+}
+
+export async function previewStaffImport(
+  wardId: string,
+  file: File,
+  onProgress?: (percent: number) => void,
+): Promise<StaffImportResult> {
+  const form = new FormData();
+  form.append("wardId", wardId);
+  form.append("file", file);
+  return uploadWithProgress<StaffImportResult>(`${API_URL}/staff/imports/preview`, form, onProgress);
+}
+
+export async function commitStaffImport(input: {
+  wardId: string;
+  sourceName?: string;
+  duplicateStrategy: "SKIP" | "UPDATE";
+  rows: StaffImportRowValue[];
+}): Promise<StaffImportResult> {
+  return apiFetch<StaffImportResult>("/staff/imports/commit", { method: "POST", body: input });
 }
 
 export async function setStaffActive(id: string, active: boolean): Promise<Employee> {
@@ -303,6 +510,7 @@ export interface AttendanceSession {
   opensAt: string;
   closesAt: string;
   createdAt: string;
+  active?: boolean;
 }
 
 export interface AttendanceRecord {
@@ -324,6 +532,9 @@ export interface RosterRow {
   status: string;
   detail: string;
   manualEditable: boolean;
+  attendanceId: string | null;
+  sessionId: string | null;
+  correctionAllowed: boolean;
 }
 
 export interface CreateSessionInput {
@@ -333,23 +544,46 @@ export interface CreateSessionInput {
   durationMinutes: number;
 }
 
-export async function listSessions(): Promise<AttendanceSession[]> {
-  return apiFetch<AttendanceSession[]>("/attendance/sessions");
+export interface AttendanceQuery {
+  wardId?: string;
+  sessionId?: string;
+  workDate?: string;
+}
+
+function attendanceQuery(query?: AttendanceQuery): string {
+  const params = new URLSearchParams();
+  if (query?.wardId) params.set("wardId", query.wardId);
+  if (query?.sessionId) params.set("sessionId", query.sessionId);
+  if (query?.workDate) params.set("workDate", query.workDate);
+  return params.toString() ? `?${params.toString()}` : "";
+}
+
+export async function listSessions(query?: Omit<AttendanceQuery, "sessionId">): Promise<AttendanceSession[]> {
+  return apiFetch<AttendanceSession[]>(`/attendance/sessions${attendanceQuery(query)}`);
 }
 
 export async function createSession(input: CreateSessionInput): Promise<AttendanceSession> {
   return apiFetch<AttendanceSession>("/attendance/sessions", { method: "POST", body: input });
 }
 
-export async function listAttendance(): Promise<AttendanceRecord[]> {
-  return apiFetch<AttendanceRecord[]>("/attendance");
+export async function closeAttendanceSession(id: string, revoke = false): Promise<void> {
+  await apiFetch(`/attendance/sessions/${encodeURIComponent(id)}/${revoke ? "revoke" : "close"}`, {
+    method: "POST",
+  });
 }
 
-export async function fetchRoster(wardId: string): Promise<RosterRow[]> {
-  return apiFetch<RosterRow[]>(`/attendance/roster?wardId=${encodeURIComponent(wardId)}`);
+export async function listAttendance(query?: AttendanceQuery): Promise<AttendanceRecord[]> {
+  return apiFetch<AttendanceRecord[]>(`/attendance${attendanceQuery(query)}`);
+}
+
+export async function fetchRoster(wardId: string, workDate?: string): Promise<RosterRow[]> {
+  const params = new URLSearchParams({ wardId });
+  if (workDate) params.set("workDate", workDate);
+  return apiFetch<RosterRow[]>(`/attendance/roster?${params.toString()}`);
 }
 
 export interface ManualAttendanceInput {
+  sessionId: string;
   employeeId: string;
   workDate: string;
   status: string;
@@ -360,23 +594,34 @@ export async function manualAttendance(input: ManualAttendanceInput): Promise<un
   return apiFetch("/attendance/manual", { method: "POST", body: input });
 }
 
+export async function correctAttendance(
+  id: string,
+  input: { sessionId: string; status: string; reason: string },
+): Promise<unknown> {
+  return apiFetch(`/attendance/${encodeURIComponent(id)}/corrections`, {
+    method: "POST",
+    body: input,
+  });
+}
+
 export interface CheckInResponse {
   ok: boolean;
-  message: string;
+  message?: string;
   status: string;
-  employee: { id: string; fullName: string };
+  employee?: { id: string; fullName: string };
   checkedAt: string;
 }
 
 export async function checkInPublic(
   sessionToken: string,
   employeeNumber: string,
+  phoneLast4: string,
   latitude?: number | null,
   longitude?: number | null,
 ): Promise<CheckInResponse> {
   return apiFetch<CheckInResponse>(`/attendance/sessions/${encodeURIComponent(sessionToken)}/check-in`, {
     method: "POST",
-    body: { employeeNumber, latitude, longitude },
+    body: { employeeNumber, phoneLast4, latitude, longitude },
   });
 }
 
@@ -678,7 +923,7 @@ export interface OrganisationCounty {
 
 export interface ReportPhotoRef {
   evidenceId: string;
-  objectKey: string;
+  accessPath?: string;
   sha256: string;
   caption: string | null;
   stage: string;
@@ -746,7 +991,7 @@ export interface ReportSnapshot {
 export interface ReportEvidenceRef {
   id: string;
   evidenceId: string | null;
-  objectKey: string;
+  accessPath?: string;
   sha256: string;
   caption: string | null;
   stage: string;
@@ -837,16 +1082,58 @@ export async function listReports(query?: {
   scopeId?: string;
   kind?: ReportKind;
 }): Promise<ReportSummary[]> {
+  return (await listReportsPage(query)).items;
+}
+
+export async function listReportsPage(query?: {
+  scopeType?: ReportScopeType;
+  scopeId?: string;
+  kind?: ReportKind;
+  page?: number;
+  pageSize?: number;
+}): Promise<{ items: ReportSummary[]; total: number; page: number; pageSize: number }> {
   const params = new URLSearchParams();
   if (query?.scopeType) params.set("scopeType", query.scopeType);
   if (query?.scopeId) params.set("scopeId", query.scopeId);
   if (query?.kind) params.set("kind", query.kind);
+  if (query?.page) params.set("page", String(query.page));
+  if (query?.pageSize) params.set("pageSize", String(query.pageSize));
   const suffix = params.toString() ? `?${params.toString()}` : "";
-  return apiFetch<ReportSummary[]>(`/reports${suffix}`);
+  const response = await fetch(`${API_URL}/reports${suffix}`, { credentials: "include" });
+  const body = await response.json().catch(() => null);
+  if (!response.ok) {
+    throw new ApiError(
+      response.status,
+      body?.error?.code ?? "REQUEST_FAILED",
+      body?.error?.message ?? "Request failed",
+    );
+  }
+  return {
+    items: body as ReportSummary[],
+    total: Number(response.headers.get("x-total-count") ?? (body as ReportSummary[]).length),
+    page: Number(response.headers.get("x-page") ?? query?.page ?? 1),
+    pageSize: Number(response.headers.get("x-page-size") ?? query?.pageSize ?? 25),
+  };
 }
 
 export async function fetchReport(id: string): Promise<Report> {
   return apiFetch<Report>(`/reports/${encodeURIComponent(id)}`);
+}
+
+export async function downloadReportEvidence(accessPath: string): Promise<Blob> {
+  if (!accessPath.startsWith(`${API_URL}/reports/`)) {
+    throw new ApiError(400, "INVALID_EVIDENCE_PATH", "Invalid report evidence path");
+  }
+  const response = await fetch(accessPath, { credentials: "include" });
+  if (!response.ok) {
+    const body = await response.json().catch(() => null);
+    throw new ApiError(
+      response.status,
+      body?.error?.code ?? "REQUEST_FAILED",
+      body?.error?.message ?? "Request failed",
+    );
+  }
+  return response.blob();
 }
 
 export async function downloadReportCsv(id: string): Promise<Blob> {

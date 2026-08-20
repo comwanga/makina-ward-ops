@@ -2,7 +2,8 @@
 
 import { FormEvent, useEffect, useState } from "react";
 import { BrandLogo } from "@/components/BrandLogo";
-import { ApiError, CheckInResponse, checkInPublic } from "@/lib/api";
+import { CheckInResponse, apiErrorMessage, checkInPublic } from "@/lib/api";
+import { StatusMessages } from "@/components/StatusMessages";
 
 function getGeolocation(): Promise<{ latitude: number; longitude: number } | null> {
   return new Promise((resolve) => {
@@ -25,6 +26,7 @@ function getGeolocation(): Promise<{ latitude: number; longitude: number } | nul
 export default function CheckInPage({ params }: { params: Promise<{ token: string }> }) {
   const [token, setToken] = useState<string>("");
   const [employeeNumber, setEmployeeNumber] = useState("");
+  const [phoneLast4, setPhoneLast4] = useState("");
   const [submitting, setSubmitting] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [result, setResult] = useState<CheckInResponse | null>(null);
@@ -42,12 +44,13 @@ export default function CheckInPage({ params }: { params: Promise<{ token: strin
       const response = await checkInPublic(
         token,
         employeeNumber,
+        phoneLast4,
         geo?.latitude ?? null,
         geo?.longitude ?? null,
       );
       setResult(response);
     } catch (err) {
-      setError(err instanceof ApiError ? err.message : "Unable to confirm attendance");
+      setError(apiErrorMessage(err, "Unable to confirm attendance"));
     } finally {
       setSubmitting(false);
     }
@@ -63,9 +66,9 @@ export default function CheckInPage({ params }: { params: Promise<{ token: strin
 
         {result ? (
           <div className="checkin-result">
-            <p className="form-success">Attendance confirmed.</p>
+            <StatusMessages notice="Attendance confirmed." />
             <p>
-              <strong>{result.employee.fullName}</strong>
+              <strong>{result.employee?.fullName ?? "Identity verified"}</strong>
             </p>
             <p>
               Status: <span className={`badge ${result.status.toLowerCase()}`}>{result.status}</span>
@@ -85,9 +88,20 @@ export default function CheckInPage({ params }: { params: Promise<{ token: strin
               onChange={(e) => setEmployeeNumber(e.target.value)}
               required
             />
-            {error && <p className="form-error">{error}</p>}
+            <label htmlFor="phoneLast4">Last 4 digits of your phone number</label>
+            <input
+              id="phoneLast4"
+              inputMode="numeric"
+              autoComplete="tel"
+              pattern="\d{4}"
+              maxLength={4}
+              value={phoneLast4}
+              onChange={(event) => setPhoneLast4(event.target.value.replace(/\D/g, "").slice(0, 4))}
+              required
+            />
+            <StatusMessages error={error} />
             <button type="submit" disabled={submitting}>
-              {submitting ? "Confirming…" : "Confirm attendance"}
+              {submitting ? "Confirming..." : "Confirm attendance"}
             </button>
           </form>
         )}

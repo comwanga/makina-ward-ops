@@ -1,4 +1,4 @@
-import { BadRequestException, Controller, Get, Param, Post, Query, Req, StreamableFile } from "@nestjs/common";
+import { BadRequestException, Controller, Get, Header, Param, Post, Query, Req, StreamableFile } from "@nestjs/common";
 import type { FastifyRequest } from "fastify";
 import { evidenceListSchema, evidenceMetaSchema } from "@ward-ops/validation";
 import { RequireCapability } from "../authorization/capability.decorator";
@@ -61,10 +61,11 @@ export class EvidenceController {
   @Get()
   list(@Query() query: Record<string, string>, @CurrentUser() auth: AuthContext | undefined) {
     const input = evidenceListSchema.parse(query);
-    return this.evidence.list(auth!, input.workLogId);
+    return this.evidence.list(auth!, input);
   }
 
   @RequireCapability("WORK_READ")
+  @Header("Cache-Control", "private, no-store")
   @Get(":id/download")
   async download(
     @Param("id") id: string,

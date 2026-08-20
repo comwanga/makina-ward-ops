@@ -111,7 +111,8 @@ export class AbsenceService {
     return absence;
   }
 
-  private toSummary(absence: AbsenceWithRelations): AbsenceSummary {
+  private toSummary(absence: AbsenceWithRelations, auth: AuthContext): AbsenceSummary {
+    const canReadMedical = auth.capabilities.includes("MEDICAL_READ");
     return {
       id: absence.id,
       employee: absence.employee,
@@ -120,7 +121,9 @@ export class AbsenceService {
       startDate: absence.startDate,
       endDate: absence.endDate,
       returnDate: absence.returnDate,
-      reason: absence.reason,
+      reason: absence.kind === "SICK_OFF" && !canReadMedical
+        ? "Restricted medical information"
+        : absence.reason,
       status: absence.status,
       version: absence.version,
       submittedBy: absence.submittedBy,
@@ -128,35 +131,17 @@ export class AbsenceService {
       reviewNote: absence.reviewNote,
       createdAt: absence.createdAt,
       reviewedAt: absence.reviewedAt,
-      documents: absence.documents.map((document) => ({
+      documents: absence.documents
+        .filter((document) => document.sensitivity !== "MEDICAL" || canReadMedical)
+        .map((document) => ({
         id: document.id,
         originalName: document.originalName,
         contentType: document.contentType,
         size: document.size,
         sensitivity: document.sensitivity,
         category: document.classification?.category ?? "OTHER",
-      })),
+        })),
     };
-  }
-
-  private async assertNoOverlap(
-    employeeId: string,
-    startDate: Date,
-    endDate: Date,
-    excludeId?: string,
-  ): Promise<void> {
-    const overlapping = await this.prisma.client.absenceRequest.findFirst({
-      where: {
-        employeeId,
-        id: excludeId ? { not: excludeId } : undefined,
-        status: { in: ["SUBMITTED", "APPROVED"] },
-        startDate: { lte: endDate },
-        endDate: { gte: startDate },
-      },
-    });
-    if (overlapping) {
-      throw new ConflictException("This employee already has an overlapping request");
-    }
   }
 
   // -- Create ----------------------------------------------------------------
@@ -179,26 +164,36 @@ export class AbsenceService {
     const returnDate = new Date(`${input.returnDate}T00:00:00.000Z`);
 
     const status: AbsenceStatus = input.planned ? "PLANNED" : "SUBMITTED";
-    if (status === "SUBMITTED") {
-      await this.assertNoOverlap(employee.id, startDate, endDate);
-    }
-
-    const absence = await this.prisma.client.absenceRequest.create({
-      data: {
-        employeeId: employee.id,
-        wardId: employee.wardId,
-        kind: input.kind,
-        startDate,
-        endDate,
-        returnDate,
-        reason: input.reason,
-        status,
-        submittedBy: auth.userId,
-      },
-      include: {
-        employee: { select: { id: true, employeeNumber: true, fullName: true } },
-        documents: { include: { classification: true } },
-      },
+    const absence = await this.prisma.client.$transaction(async (tx) => {
+      if (status === "SUBMITTED") {
+        await tx.$executeRaw`SELECT pg_advisory_xact_lock(hashtext(${`absence-employee:${employee.id}`}))`;
+        const overlapping = await tx.absenceRequest.findFirst({
+          where: {
+            employeeId: employee.id,
+            status: { in: ["SUBMITTED", "APPROVED"] },
+            startDate: { lte: endDate },
+            endDate: { gte: startDate },
+          },
+        });
+        if (overlapping) throw new ConflictException("This employee already has an overlapping request");
+      }
+      return tx.absenceRequest.create({
+        data: {
+          employeeId: employee.id,
+          wardId: employee.wardId,
+          kind: input.kind,
+          startDate,
+          endDate,
+          returnDate,
+          reason: input.reason,
+          status,
+          submittedBy: auth.userId,
+        },
+        include: {
+          employee: { select: { id: true, employeeNumber: true, fullName: true } },
+          documents: { include: { classification: true } },
+        },
+      });
     });
     await this.audit.record({
       action: "ABSENCE.CREATED",
@@ -211,7 +206,7 @@ export class AbsenceService {
       requestId: meta.requestId,
       details: `${input.kind} ${status}`,
     });
-    return this.toSummary(absence);
+    return this.toSummary(absence, auth);
   }
 
   // -- Reads -----------------------------------------------------------------
@@ -225,6 +220,8 @@ export class AbsenceService {
     }
     if (query.status) where.status = query.status;
     if (query.employeeId) where.employeeId = query.employeeId;
+    if (query.fromDate) where.endDate = { gte: new Date(`${query.fromDate}T00:00:00.000Z`) };
+    if (query.toDate) where.startDate = { lte: new Date(`${query.toDate}T00:00:00.000Z`) };
 
     const absences = await this.prisma.client.absenceRequest.findMany({
       where,
@@ -233,8 +230,10 @@ export class AbsenceService {
         documents: { include: { classification: true } },
       },
       orderBy: { createdAt: "desc" },
+      skip: query.page ? (query.page - 1) * (query.pageSize ?? 25) : undefined,
+      take: query.page || query.pageSize ? query.pageSize ?? 25 : undefined,
     });
-    return absences.map((absence) => this.toSummary(absence));
+    return absences.map((absence) => this.toSummary(absence, auth));
   }
 
   async get(auth: AuthContext, id: string): Promise<AbsenceSummary> {
@@ -242,7 +241,7 @@ export class AbsenceService {
     if (!(await this.scope.wardAccessible(auth, absence.wardId))) {
       throw new NotFoundException("Absence request not found");
     }
-    return this.toSummary(absence);
+    return this.toSummary(absence, auth);
   }
 
   // -- Transitions -----------------------------------------------------------
@@ -262,6 +261,9 @@ export class AbsenceService {
     if (!required || !auth.capabilities.includes(required)) {
       throw new ForbiddenException("You do not have permission for this action");
     }
+    if (absence.version !== input.expectedVersion) {
+      throw new ConflictException("Absence request changed; reload it before taking action");
+    }
 
     const next = nextAbsenceStatus(absence.status, input.action);
     if (!next) {
@@ -273,29 +275,41 @@ export class AbsenceService {
     if (input.action === "REJECT" && input.reviewNote.trim().length < 3) {
       throw new BadRequestException("A rejection note is required");
     }
-    if (input.action === "SUBMIT") {
-      await this.assertNoOverlap(absence.employeeId, absence.startDate, absence.endDate, id);
-    }
-
     const reviewed = input.action === "APPROVE" || input.action === "REJECT";
-    const updated = await this.prisma.client.absenceRequest.update({
-      where: { id },
-      data: {
-        status: next,
-        version: { increment: 1 },
-        ...(reviewed
-          ? {
-              reviewedBy: auth.userId,
-              reviewedAt: new Date(),
-              reviewNote: input.reviewNote.trim() || null,
-            }
-          : {}),
-      },
-      include: {
-        employee: { select: { id: true, employeeNumber: true, fullName: true } },
-        documents: { include: { classification: true } },
-      },
+    const result = await this.prisma.client.$transaction(async (tx) => {
+      await tx.$executeRaw`SELECT pg_advisory_xact_lock(hashtext(${`absence:${id}`}))`;
+      if (input.action === "SUBMIT") {
+        await tx.$executeRaw`SELECT pg_advisory_xact_lock(hashtext(${`absence-employee:${absence.employeeId}`}))`;
+        const overlapping = await tx.absenceRequest.findFirst({
+          where: {
+            employeeId: absence.employeeId,
+            id: { not: id },
+            status: { in: ["SUBMITTED", "APPROVED"] },
+            startDate: { lte: absence.endDate },
+            endDate: { gte: absence.startDate },
+          },
+        });
+        if (overlapping) throw new ConflictException("This employee already has an overlapping request");
+      }
+      return tx.absenceRequest.updateMany({
+        where: { id, version: input.expectedVersion, status: absence.status },
+        data: {
+          status: next,
+          version: { increment: 1 },
+          ...(reviewed
+            ? {
+                reviewedBy: auth.userId,
+                reviewedAt: new Date(),
+                reviewNote: input.reviewNote.trim() || null,
+              }
+            : {}),
+        },
+      });
     });
+    if (result.count === 0) {
+      throw new ConflictException("Absence request changed; reload it before taking action");
+    }
+    const updated = await this.findOrThrow(id);
     await this.audit.record({
       action: ACTION_AUDIT[input.action],
       targetType: "AbsenceRequest",
@@ -307,7 +321,7 @@ export class AbsenceService {
       requestId: meta.requestId,
       details: `${absence.status} -> ${next}`,
     });
-    return this.toSummary(updated);
+    return this.toSummary(updated, auth);
   }
 
   // -- Documents -------------------------------------------------------------
@@ -323,8 +337,8 @@ export class AbsenceService {
     if (!(await this.scope.wardAccessible(auth, absence.wardId))) {
       throw new NotFoundException("Absence request not found");
     }
-    if (absence.documents.length >= 5) {
-      throw new BadRequestException("This request already has the maximum number of documents");
+    if (["APPROVED", "REJECTED", "CANCELLED"].includes(absence.status)) {
+      throw new ConflictException("Documents cannot be added after the request reaches a terminal review state");
     }
 
     const contentType = detectContentType(file.buffer);
@@ -344,32 +358,46 @@ export class AbsenceService {
         : "GENERAL";
 
     try {
-      const document = await this.prisma.client.document.create({
-        data: {
-          absenceRequestId: absence.id,
-          objectKey: stored.objectKey,
-          originalName: file.originalName.slice(0, 200),
-          contentType,
-          size: stored.size,
-          sha256: stored.sha256,
-          sensitivity,
-          uploadedBy: auth.userId,
-          classification: {
-            create: { category },
+      const document = await this.prisma.client.$transaction(async (tx) => {
+        await tx.$executeRaw`SELECT pg_advisory_xact_lock(hashtext(${`absence:${absenceId}`}))`;
+        const current = await tx.absenceRequest.findUnique({
+          where: { id: absenceId },
+          include: { _count: { select: { documents: true } } },
+        });
+        if (!current || ["APPROVED", "REJECTED", "CANCELLED"].includes(current.status)) {
+          throw new ConflictException("Documents cannot be added after the request reaches a terminal review state");
+        }
+        if (current._count.documents >= 5) {
+          throw new BadRequestException("This request already has the maximum number of documents");
+        }
+        const created = await tx.document.create({
+          data: {
+            absenceRequestId: absence.id,
+            objectKey: stored.objectKey,
+            originalName: file.originalName.slice(0, 200),
+            contentType,
+            size: stored.size,
+            sha256: stored.sha256,
+            sensitivity,
+            uploadedBy: auth.userId,
+            classification: {
+              create: { category },
+            },
           },
-        },
-        include: { classification: true },
-      });
-      await this.audit.record({
-        action: "ABSENCE.DOCUMENT_UPLOADED",
-        targetType: "Document",
-        targetId: document.id,
-        scopeType: "WARD",
-        scopeId: absence.wardId,
-        actorUserId: auth.userId,
-        sourceIp: meta.sourceIp,
-        requestId: meta.requestId,
-        details: `${category} ${sensitivity}`,
+          include: { classification: true },
+        });
+        await this.audit.record({
+          action: "ABSENCE.DOCUMENT_UPLOADED",
+          targetType: "Document",
+          targetId: created.id,
+          scopeType: "WARD",
+          scopeId: absence.wardId,
+          actorUserId: auth.userId,
+          sourceIp: meta.sourceIp,
+          requestId: meta.requestId,
+          details: `${category} ${sensitivity}`,
+        }, tx);
+        return created;
       });
       return {
         id: document.id,

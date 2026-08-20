@@ -14,6 +14,17 @@ import {
 const TEST_DB_URL = process.env.TEST_DATABASE_URL!;
 const PASSWORD = "TestPass-123456";
 
+function multipartRoster(wardId: string, name: string, data: Buffer): { body: Buffer; contentType: string } {
+  const boundary = `----wardops${Math.random().toString(36).slice(2)}`;
+  const body = Buffer.concat([
+    Buffer.from(`--${boundary}\r\nContent-Disposition: form-data; name="wardId"\r\n\r\n${wardId}\r\n`),
+    Buffer.from(`--${boundary}\r\nContent-Disposition: form-data; name="file"; filename="${name}"\r\nContent-Type: text/csv\r\n\r\n`),
+    data,
+    Buffer.from(`\r\n--${boundary}--\r\n`),
+  ]);
+  return { body, contentType: `multipart/form-data; boundary=${boundary}` };
+}
+
 describe("staff management (integration)", () => {
   let app: NestFastifyApplication;
   let prisma: PrismaClient;
@@ -280,6 +291,89 @@ describe("staff management (integration)", () => {
       payload: { wardId: woodleyWard.id },
     });
     expect(duplicate.statusCode).toBe(409);
+  });
+
+  it("distinguishes a permanent transfer from a temporary assignment", async () => {
+    const employeeId = await createEmployee(prisma, {
+      employeeNumber: "20250100018",
+      fullName: "Transfer Staff",
+      phone: "0712000018",
+      wardId: makinaWard.id,
+    });
+    const temporary = await api(app, {
+      method: "POST",
+      url: `/api/v1/staff/${employeeId}/assignments`,
+      cookie: admin.cookie,
+      csrf: admin.csrf,
+      payload: { wardId: woodleyWard.id, type: "TEMPORARY" },
+    });
+    expect(temporary.statusCode).toBe(201);
+    expect(temporary.json().wardId).toBe(makinaWard.id);
+
+    const transferred = await api(app, {
+      method: "POST",
+      url: `/api/v1/staff/${employeeId}/assignments`,
+      cookie: admin.cookie,
+      csrf: admin.csrf,
+      payload: { wardId: woodleyWard.id, type: "TRANSFER" },
+    });
+    expect(transferred.statusCode).toBe(201);
+    expect(transferred.json().wardId).toBe(woodleyWard.id);
+    expect(transferred.json().assignments).toEqual([]);
+    const history = await prisma.employeeAssignment.findMany({
+      where: { employeeId, kind: "PRIMARY" },
+      orderBy: { assignedAt: "asc" },
+    });
+    expect(history).toHaveLength(2);
+    expect(history[0]).toEqual(expect.objectContaining({ wardId: makinaWard.id, endedAt: expect.any(Date) }));
+    expect(history[1]).toEqual(expect.objectContaining({ wardId: woodleyWard.id, endedAt: null }));
+  });
+
+  it("previews and commits CSV imports with row results and history", async () => {
+    const csv = Buffer.from([
+      "Employee ID,Full Name,Phone Number,Status,Residence",
+      "20250100019,Import One,0712000019,On duty,Makina",
+      "20250100020,Duplicate Phone,0712000019,On duty,Makina",
+    ].join("\n"));
+    const upload = multipartRoster(makinaWard.id, "staff.csv", csv);
+    const preview = await app.inject({
+      method: "POST",
+      url: "/api/v1/staff/imports/preview",
+      headers: {
+        cookie: officer.cookie!,
+        "x-csrf-token": officer.csrf!,
+        "content-type": upload.contentType,
+      },
+      payload: upload.body,
+    });
+    expect(preview.statusCode).toBe(201);
+    expect(preview.json().rows.map((row: { status: string }) => row.status)).toEqual([
+      "CREATE",
+      "DUPLICATE_FILE",
+    ]);
+
+    const commit = await api(app, {
+      method: "POST",
+      url: "/api/v1/staff/imports/commit",
+      cookie: officer.cookie,
+      csrf: officer.csrf,
+      payload: {
+        wardId: makinaWard.id,
+        sourceName: "staff.csv",
+        duplicateStrategy: "SKIP",
+        rows: [preview.json().rows[0].value],
+      },
+    });
+    expect(commit.statusCode).toBe(201);
+    expect(commit.json().rows[0].status).toBe("CREATE");
+
+    const history = await api(app, {
+      method: "GET",
+      url: "/api/v1/staff/imports/history",
+      cookie: officer.cookie,
+    });
+    expect(history.statusCode).toBe(200);
+    expect(history.json().items[0].targetId).toBe(commit.json().importId);
   });
 
   it("requires STAFF_MANAGE for mutations", async () => {

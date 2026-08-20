@@ -1,7 +1,6 @@
 import { Inject, Injectable, Logger } from "@nestjs/common";
 import { createTransport } from "nodemailer";
 import type { Transporter } from "nodemailer";
-import { Prisma } from "@ward-ops/database";
 import { PrismaService } from "../prisma/prisma.service";
 import { AuditService } from "../audit/audit.service";
 import { APP_CONFIG } from "../config/config.module";
@@ -9,6 +8,7 @@ import type { AppConfig } from "../config/config";
 
 const REMINDER_OFFSETS = [30, 14, 7];
 const HOUR_MS = 60 * 60 * 1000;
+const CLAIM_STALE_MS = 15 * 60 * 1000;
 
 /** Redacts an email address for logging (e.g. a***@example.com). */
 function redactEmail(email: string): string {
@@ -92,46 +92,64 @@ export class AbsenceReminderService {
       const recipient = request.employee.email;
       if (!recipient) continue;
 
-      let deliveryId: string;
-      try {
-        const delivery = await this.prisma.client.reminderDelivery.create({
+      const claim = await this.prisma.client.$transaction(async (tx) => {
+        await tx.$executeRaw`SELECT pg_advisory_xact_lock(hashtext(${`reminder:${request.id}:${days}`}))`;
+        let delivery = await tx.reminderDelivery.findUnique({
+          where: { absenceRequestId_reminderDays: { absenceRequestId: request.id, reminderDays: days } },
+        });
+        const created = !delivery;
+        if (!delivery) {
+          delivery = await tx.reminderDelivery.create({
+            data: { absenceRequestId: request.id, reminderDays: days, recipient, status: "PENDING" },
+          });
+        }
+        if (delivery.status === "SENT") return null;
+        if (!this.transporter) {
+          if (created) {
+            await tx.reminderDelivery.update({
+              where: { id: delivery.id },
+              data: { message: "SMTP is not configured; reminder retained for delivery" },
+            });
+          }
+          return created ? { deliveryId: delivery.id, send: false } : null;
+        }
+        const claimedAt = delivery.message?.startsWith("SENDING:")
+          ? Date.parse(delivery.message.slice("SENDING:".length))
+          : Number.NaN;
+        if (!Number.isNaN(claimedAt) && Date.now() - claimedAt < CLAIM_STALE_MS) return null;
+        await tx.reminderDelivery.update({
+          where: { id: delivery.id },
           data: {
-            absenceRequestId: request.id,
-            reminderDays: days,
-            recipient,
-            status: "PENDING",
+            status: "FAILED",
+            message: `SENDING:${new Date().toISOString()}`,
           },
         });
-        deliveryId = delivery.id;
-      } catch (error) {
-        if (isUniqueViolation(error)) continue;
-        throw error;
-      }
-
-      const sent = await this.send(
-        recipient,
-        request.employee.fullName,
-        request.startDate,
-        days,
-      );
-      await this.prisma.client.reminderDelivery.update({
-        where: { id: deliveryId },
-        data: {
-          status: sent ? "SENT" : "PENDING",
-          message: sent ? null : "SMTP is not configured; reminder retained for delivery",
-          sentAt: sent ? new Date() : null,
-        },
+        return { deliveryId: delivery.id, send: true };
       });
+      if (!claim) continue;
+      if (claim.send) {
+        const sent = await this.send(recipient, request.employee.fullName, request.startDate, days);
+        await this.prisma.client.reminderDelivery.update({
+          where: { id: claim.deliveryId },
+          data: {
+            status: sent ? "SENT" : "FAILED",
+            message: sent ? null : "Delivery failed; retry pending",
+            sentAt: sent ? new Date() : null,
+          },
+        });
+      }
       processed += 1;
     }
 
-    await this.audit.record({
-      action: "ABSENCE.REMINDERS_PROCESSED",
-      targetType: "ReminderDelivery",
-      sourceIp: meta.sourceIp,
-      requestId: meta.requestId,
-      details: `${processed} reminder deliveries created`,
-    });
+    if (processed > 0) {
+      await this.audit.record({
+        action: "ABSENCE.REMINDERS_PROCESSED",
+        targetType: "ReminderDelivery",
+        sourceIp: meta.sourceIp,
+        requestId: meta.requestId,
+        details: `${processed} reminder deliveries created or attempted`,
+      });
+    }
     return processed;
   }
 
@@ -157,10 +175,4 @@ export class AbsenceReminderService {
       return false;
     }
   }
-}
-
-function isUniqueViolation(error: unknown): boolean {
-  return (
-    error instanceof Prisma.PrismaClientKnownRequestError && error.code === "P2002"
-  );
 }

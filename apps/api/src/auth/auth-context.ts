@@ -14,6 +14,7 @@ export interface AuthAssignment {
   countyId: string | null;
   subcountyId: string | null;
   wardId: string | null;
+  capabilities: CapabilityCode[];
 }
 
 export interface AuthContext {
@@ -24,6 +25,7 @@ export interface AuthContext {
   csrfToken: string;
   capabilities: CapabilityCode[];
   assignments: AuthAssignment[];
+  requiredCapabilities?: CapabilityCode[];
 }
 
 export function readAuthContext(request: FastifyRequest): AuthContext | undefined {

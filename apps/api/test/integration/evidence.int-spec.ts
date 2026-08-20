@@ -192,6 +192,19 @@ describe("evidence (integration)", () => {
     expect(status).toBe(400);
   });
 
+  it("prohibits evidence mutation after terminal review", async () => {
+    const approved = await api(app, {
+      method: "POST",
+      url: `/api/v1/work-logs/${workLogId}/actions`,
+      cookie: viewer.cookie,
+      csrf: viewer.csrf,
+      payload: { action: "APPROVE", expectedVersion: 1 },
+    });
+    expect(approved.statusCode).toBe(201);
+    const upload = await uploadPhoto(workLogId, officer, "AFTER");
+    expect(upload.status).toBe(409);
+  });
+
   it("rejects a non-image upload", async () => {
     const { status } = await uploadPhoto(workLogId, officer, "BEFORE", Buffer.from("not a photo"));
     expect(status).toBe(400);

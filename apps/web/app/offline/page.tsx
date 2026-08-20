@@ -1,4 +1,3 @@
-import Link from "next/link";
 import { BrandLogo } from "@/components/BrandLogo";
 
 export default function OfflinePage() {
@@ -8,14 +7,14 @@ export default function OfflinePage() {
       <div className="hero">
         <h1>You are offline</h1>
         <p className="purpose">
-          MazingiraOps needs a connection to load live data. Reconnect and try again — your
+          MazingiraOps needs a connection to load live data. Reconnect and try again. Your
           reports and check-in links will resume automatically.
         </p>
       </div>
       <div className="home-actions">
-        <Link href="/" className="primary-btn">
+        <a href="/dashboard" className="primary-btn">
           Try again
-        </Link>
+        </a>
       </div>
     </main>
   );

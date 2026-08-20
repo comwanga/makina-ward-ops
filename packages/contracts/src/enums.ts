@@ -8,6 +8,10 @@ export const ROLE_CODES = [
   "SYSTEM_ADMIN",
   "WARD_OFFICER",
   "SUBCOUNTY_REVIEWER",
+  "CHIEF_SUBCOUNTY_OFFICER",
+  "ASSISTANT_DIRECTOR",
+  "DEPUTY_DIRECTOR",
+  "DIRECTOR",
   "HR_VIEWER",
   "READ_ONLY",
 ] as const;
@@ -19,6 +23,7 @@ export type ScopeType = (typeof SCOPE_TYPES)[number];
 export const CAPABILITY_CODES = [
   "STAFF_READ",
   "STAFF_MANAGE",
+  "STAFF_IMPORT",
   "ATTENDANCE_READ",
   "ATTENDANCE_MANAGE",
   "WORK_READ",
@@ -29,9 +34,17 @@ export const CAPABILITY_CODES = [
   "ABSENCE_REVIEW",
   "MEDICAL_READ",
   "REPORTS_READ",
+  "REPORTS_GENERATE",
+  "REPORTS_EXPORT",
   "REPORTS_FINALIZE",
   "AUDIT_READ",
   "USERS_MANAGE",
+  "USERS_READ",
+  "USERS_DISABLE",
+  "PERMISSIONS_MANAGE",
+  "SCOPE_MANAGE",
+  "RECORD_ARCHIVE",
+  "EVIDENCE_REMOVE",
 ] as const;
 export type CapabilityCode = (typeof CAPABILITY_CODES)[number];
 

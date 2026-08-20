@@ -3,8 +3,10 @@
 import { FormEvent, useCallback, useEffect, useState } from "react";
 import { useRouter } from "next/navigation";
 import { BrandLogo } from "@/components/BrandLogo";
+import { ConfirmDialog } from "@/components/ConfirmDialog";
 import { DashNav } from "@/components/DashNav";
-import { ApiError, CompletionStatus, Evidence, EvidenceStage, Ward, WorkLog, WorkLogAction, createWorkLog, downloadEvidence, fetchMe, listEvidence, listWards, listWorkLogs, uploadEvidence, workLogAction } from "@/lib/api";
+import { StatusMessages } from "@/components/StatusMessages";
+import { ApiError, CompletionStatus, Evidence, EvidenceStage, Ward, WorkLog, WorkLogAction, apiErrorMessage, createWorkLog, downloadEvidence, fetchMe, listEvidence, listWards, listWorkLogs, uploadEvidence, workLogAction } from "@/lib/api";
 import { compressImage } from "@/lib/image";
 
 const STAGES: EvidenceStage[] = ["BEFORE", "DURING", "AFTER"];
@@ -37,6 +39,8 @@ export default function WorkLogsPage() {
   const [submitting, setSubmitting] = useState(false);
   const [uploading, setUploading] = useState<string | null>(null);
   const [uploadProgress, setUploadProgress] = useState<number | null>(null);
+  const [loading, setLoading] = useState(true);
+  const [pendingAction, setPendingAction] = useState<{ workLog: WorkLog; action: WorkLogAction } | null>(null);
   const [form, setForm] = useState({
     wardId: "",
     workDate: nairobiToday(),
@@ -70,6 +74,10 @@ export default function WorkLogsPage() {
         router.push("/account/password");
         return;
       }
+      if (!current.capabilities.includes("WORK_READ")) {
+        router.replace("/dashboard");
+        return;
+      }
       setMe(current);
       const accessible = await listWards();
       setWards(accessible);
@@ -77,13 +85,24 @@ export default function WorkLogsPage() {
         ...currentForm,
         wardId: currentForm.wardId || accessible[0]?.id || "",
       }));
-      setWorkLogs(await listWorkLogs());
+      const logs = await listWorkLogs();
+      setWorkLogs(logs);
+      const evidenceResults = await Promise.allSettled(
+        logs.map(async (log) => [log.id, await listEvidence(log.id)] as const),
+      );
+      setEvidenceByWorkLog(
+        Object.fromEntries(
+          evidenceResults.flatMap((result) => result.status === "fulfilled" ? [result.value] : []),
+        ),
+      );
     } catch (err) {
       if (err instanceof ApiError && err.status === 401) {
         router.push("/login");
       } else {
-        setError(err instanceof ApiError ? err.message : "Unable to load work logs");
+        setError(apiErrorMessage(err, "Unable to load work logs"));
       }
+    } finally {
+      setLoading(false);
     }
   }, [router]);
 
@@ -96,7 +115,7 @@ export default function WorkLogsPage() {
       const items = await listEvidence(workLogId);
       setEvidenceByWorkLog((current) => ({ ...current, [workLogId]: items }));
     } catch (err) {
-      setError(err instanceof ApiError ? err.message : "Unable to load evidence");
+      setError(apiErrorMessage(err, "Unable to load evidence"));
     }
   }
 
@@ -104,7 +123,7 @@ export default function WorkLogsPage() {
     if (!file) return;
     setError(null);
     setNotice(null);
-    setUploading(stage);
+    setUploading(`${workLog.id}:${stage}`);
     setUploadProgress(0);
     try {
       const prepared = await compressImage(file);
@@ -122,7 +141,7 @@ export default function WorkLogsPage() {
     } catch (err) {
       setUploading(null);
       setUploadProgress(null);
-      setError(err instanceof ApiError ? err.message : "Unable to upload photo");
+      setError(apiErrorMessage(err, "Unable to upload photo"));
     }
   }
 
@@ -132,7 +151,7 @@ export default function WorkLogsPage() {
       const blob = await downloadEvidence(evidence.id);
       window.open(URL.createObjectURL(blob), "_blank");
     } catch (err) {
-      setError(err instanceof ApiError ? err.message : "Unable to open photo");
+      setError(apiErrorMessage(err, "Unable to open photo"));
     }
   }
 
@@ -156,28 +175,22 @@ export default function WorkLogsPage() {
       }));
       setWorkLogs(await listWorkLogs());
     } catch (err) {
-      setError(err instanceof ApiError ? err.message : "Unable to create work log");
+      setError(apiErrorMessage(err, "Unable to create work log"));
     } finally {
       setSubmitting(false);
     }
   }
 
-  async function onAction(workLog: WorkLog, action: WorkLogAction) {
+  async function onAction(workLog: WorkLog, action: WorkLogAction, reviewNote?: string) {
     setError(null);
     setNotice(null);
+    setPendingAction(null);
     try {
-      let reviewNote: string | undefined;
-      if (action === "REJECT") {
-        reviewNote = window.prompt("Rejection note (at least 3 characters)") ?? "";
-        if (!reviewNote.trim()) {
-          setError("A rejection note is required.");
-          return;
-        }
-      }
       await workLogAction(workLog.id, { action, reviewNote });
+      setNotice(`${workLog.activity} ${action === "APPROVE" ? "approved" : "rejected"}.`);
       setWorkLogs(await listWorkLogs());
     } catch (err) {
-      setError(err instanceof ApiError ? err.message : "Unable to update work log");
+      setError(apiErrorMessage(err, "Unable to update work log"));
     }
   }
 
@@ -191,7 +204,7 @@ export default function WorkLogsPage() {
   };
 
   return (
-    <main className="dashboard">
+    <main className="dashboard" aria-busy={loading}>
       <header className="dash-header">
         <BrandLogo size={44} />
         <div className="dash-title">
@@ -201,11 +214,11 @@ export default function WorkLogsPage() {
         <DashNav />
       </header>
 
+      <StatusMessages error={error} notice={notice} loading={loading ? "Loading work logs..." : null} />
+
       {can("WORK_CREATE") && (
         <section className="panel">
           <h2>New work log</h2>
-          {error && <p className="form-error">{error}</p>}
-          {notice && <p className="form-success">{notice}</p>}
           <form className="grid-form" onSubmit={onCreate}>
             <label>
               Ward
@@ -374,7 +387,7 @@ export default function WorkLogsPage() {
               />
             </label>
             <button type="submit" disabled={submitting}>
-              {submitting ? "Saving…" : "Submit work log"}
+            {submitting ? "Saving..." : "Submit work log"}
             </button>
           </form>
         </section>
@@ -382,10 +395,10 @@ export default function WorkLogsPage() {
 
       <section className="panel">
         <h2>Work logs</h2>
-        {workLogs.length === 0 ? (
+        {workLogs.length === 0 ? (!loading && (
           <p className="empty">No work logs recorded.</p>
-        ) : (
-          <table className="data-table">
+        )) : (
+          <div className="table-wrap"><table className="data-table">
             <thead>
               <tr>
                 <th>Date</th>
@@ -423,10 +436,10 @@ export default function WorkLogsPage() {
                     {can("WORK_READ") && (
                       <EvidenceCell
                         evidence={evidenceByWorkLog[workLog.id] ?? []}
-                        canUpload={can("WORK_CREATE")}
+                        canUpload={can("WORK_CREATE") && workLog.status === "SUBMITTED"}
                         onOpen={onOpenEvidence}
                         onUploaded={(file, stage) => void onUploadEvidence(workLog, file, stage)}
-                        uploadingStage={uploading}
+                        uploadingStage={uploading?.startsWith(`${workLog.id}:`) ? uploading.split(":")[1] : null}
                         uploadProgress={uploadProgress}
                       />
                     )}
@@ -437,7 +450,8 @@ export default function WorkLogsPage() {
                         <button
                           key={item.action}
                           className="link-btn"
-                          onClick={() => void onAction(workLog, item.action)}
+                          type="button"
+                          onClick={() => setPendingAction({ workLog, action: item.action })}
                         >
                           {item.label}
                         </button>
@@ -447,9 +461,18 @@ export default function WorkLogsPage() {
                 </tr>
               ))}
             </tbody>
-          </table>
+          </table></div>
         )}
       </section>
+      <ConfirmDialog
+        open={Boolean(pendingAction)}
+        title={`${pendingAction?.action === "APPROVE" ? "Approve" : "Reject"} work log?`}
+        description={pendingAction ? `${pendingAction.workLog.activity} at ${pendingAction.workLog.location} will move to a terminal review state.` : ""}
+        confirmLabel={pendingAction?.action === "APPROVE" ? "Approve" : "Reject"}
+        requireText={pendingAction?.action === "REJECT"}
+        onCancel={() => setPendingAction(null)}
+        onConfirm={(text) => pendingAction && void onAction(pendingAction.workLog, pendingAction.action, text || undefined)}
+      />
     </main>
   );
 }
@@ -477,24 +500,21 @@ function EvidenceCell({
           <span key={stage} className="doc-stage">
             <strong>{stage.toLowerCase()}</strong> ({items.length})
             {items.map((item) => (
-              <a
+              <button
                 key={item.id}
                 className="link-btn"
-                href="#"
-                onClick={(e) => {
-                  e.preventDefault();
-                  onOpen(item);
-                }}
+                type="button"
+                onClick={() => onOpen(item)}
               >
                 view
-              </a>
+              </button>
             ))}
             {canUpload && (
               <label className="link-btn">
                 {uploadingStage === stage
                   ? uploadProgress !== null
                     ? `uploading ${uploadProgress}%`
-                    : "preparing…"
+                    : "preparing..."
                   : "+ upload"}
                 <input
                   type="file"

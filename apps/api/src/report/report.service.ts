@@ -1,9 +1,9 @@
 import {
-  ForbiddenException,
   Inject,
   Injectable,
   NotFoundException,
 } from "@nestjs/common";
+import { createHash } from "node:crypto";
 import { Prisma } from "@ward-ops/database";
 import type { AttendanceStatus, EvidenceStage } from "@ward-ops/contracts";
 import type {
@@ -13,12 +13,13 @@ import type {
   ReportQueryInput,
 } from "@ward-ops/validation";
 import { AuthContext } from "../auth/auth-context";
-import { ScopeService } from "../authorization/scope.service";
+import { isScopeWithinAssignment, ScopeService } from "../authorization/scope.service";
 import { AttendanceService } from "../attendance/attendance.service";
 import { AuditService } from "../audit/audit.service";
 import { APP_CONFIG } from "../config/config.module";
 import type { AppConfig } from "../config/config";
 import { PrismaService } from "../prisma/prisma.service";
+import { ObjectStorage } from "../storage/object-storage.service";
 import {
   ReportSnapshot,
   ReportDay,
@@ -32,9 +33,9 @@ import {
   enumerateDates,
   escapeCsvCell,
   fromDateString,
-  isWeekend,
   reportTitle,
   samplePeriodPhotos,
+  signerTitle,
   toDateOnly,
 } from "./report-aggregation";
 
@@ -50,11 +51,30 @@ interface RosterRow {
   manualEditable: boolean;
 }
 
+export interface ReportListResult {
+  items: Array<Record<string, unknown>>;
+  page: number;
+  pageSize: number;
+  total: number;
+}
+
 type ReportWithRelations = Prisma.ReportGetPayload<{ include: { evidence: true } }>;
 
 interface ResolvedScope {
   wardIds: string[];
   scopeName: string;
+}
+
+const STORAGE_KEY_FIELDS = new Set(["objectKey", "object_key", "storageKey", "storage_key"]);
+
+function redactStorageKeys(value: unknown): unknown {
+  if (Array.isArray(value)) return value.map(redactStorageKeys);
+  if (!value || typeof value !== "object") return value;
+  return Object.fromEntries(
+    Object.entries(value as Record<string, unknown>)
+      .filter(([key]) => !STORAGE_KEY_FIELDS.has(key))
+      .map(([key, item]) => [key, redactStorageKeys(item)]),
+  );
 }
 
 function collectReportEvidence(
@@ -64,7 +84,9 @@ function collectReportEvidence(
   for (const workLog of snapshot.workLogs) {
     for (const photo of workLog.photos) {
       rows.push({
-        evidenceId: photo.evidenceId,
+        sourceEvidence: photo.evidenceId
+          ? { connect: { id: photo.evidenceId } }
+          : undefined,
         objectKey: photo.objectKey,
         sha256: photo.sha256,
         caption: photo.caption,
@@ -82,6 +104,7 @@ export class ReportService {
     private readonly scope: ScopeService,
     private readonly attendance: AttendanceService,
     private readonly audit: AuditService,
+    private readonly storage: ObjectStorage,
     @Inject(APP_CONFIG) private readonly config: AppConfig,
   ) {}
 
@@ -134,7 +157,39 @@ export class ReportService {
     return { wardIds, scopeName: county?.name ?? "County" };
   }
 
+  private publicSnapshot(snapshot: unknown): Record<string, unknown> {
+    return redactStorageKeys(snapshot) as Record<string, unknown>;
+  }
+
+  private async authorizingReportRoles(
+    auth: AuthContext,
+    scopeType: "WARD" | "SUBCOUNTY" | "COUNTY",
+    scopeId: string,
+  ) {
+    let lineage: { subcountyId?: string; countyId?: string } = {};
+    if (scopeType === "WARD") {
+      const ward = await this.prisma.client.ward.findUnique({
+        where: { id: scopeId },
+        select: { subcountyId: true, subcounty: { select: { countyId: true } } },
+      });
+      if (ward) lineage = { subcountyId: ward.subcountyId, countyId: ward.subcounty.countyId };
+    } else if (scopeType === "SUBCOUNTY") {
+      const subcounty = await this.prisma.client.subcounty.findUnique({
+        where: { id: scopeId },
+        select: { countyId: true },
+      });
+      if (subcounty) lineage = { countyId: subcounty.countyId };
+    }
+    return auth.assignments
+      .filter((assignment) =>
+        assignment.capabilities.includes("REPORTS_FINALIZE") &&
+        isScopeWithinAssignment(assignment, { scopeType, scopeId }, lineage),
+      )
+      .map((assignment) => assignment.role);
+  }
+
   private toSummary(report: ReportWithRelations): Record<string, unknown> {
+    const snapshot = report.snapshot as unknown as ReportSnapshot;
     return {
       id: report.id,
       kind: report.kind,
@@ -146,7 +201,25 @@ export class ReportService {
       title: report.title,
       narrative: report.narrative,
       recommendations: report.recommendations,
-      snapshot: report.snapshot as unknown as ReportSnapshot,
+      snapshot: Array.isArray(snapshot.workLogs)
+        ? {
+            ...this.publicSnapshot(snapshot),
+            workLogs: snapshot.workLogs.map((workLog) => ({
+              ...workLog,
+              photos: workLog.photos.map(({ objectKey, ...photo }) => {
+                const reportEvidence = report.evidence.find(
+                  (item) => item.objectKey === objectKey,
+                );
+                return {
+                  ...photo,
+                  ...(reportEvidence
+                    ? { accessPath: `/api/v1/reports/${report.id}/evidence/${reportEvidence.id}` }
+                    : {}),
+                };
+              }),
+            })),
+          }
+        : this.publicSnapshot(snapshot),
       version: report.version,
       finalizedBy: report.finalizedBy,
       finalizedAt: report.finalizedAt,
@@ -155,10 +228,10 @@ export class ReportService {
       evidence: report.evidence.map((evidence) => ({
         id: evidence.id,
         evidenceId: evidence.evidenceId,
-        objectKey: evidence.objectKey,
         sha256: evidence.sha256,
         caption: evidence.caption,
         stage: evidence.stage,
+        accessPath: `/api/v1/reports/${report.id}/evidence/${evidence.id}`,
       })),
     };
   }
@@ -196,32 +269,45 @@ export class ReportService {
 
     const totals = emptyTotals();
     const days: ReportDay[] = [];
-    const employeeNumbers = new Set<string>();
+    const rosterEmployees: Array<{ row: ReportRosterRow; employeeId: string }> = [];
+
+    const sessions = await this.prisma.client.attendanceSession.findMany({
+      where: {
+        wardId: { in: wardIds },
+        workDate: { gte: start, lte: end },
+      },
+      orderBy: { createdAt: "desc" },
+    });
+    const sessionByWardDate = new Map<string, (typeof sessions)[number]>();
+    for (const session of sessions) {
+      const key = `${session.wardId}:${toDateOnly(session.workDate)}`;
+      if (!sessionByWardDate.has(key)) sessionByWardDate.set(key, session);
+    }
 
     for (const date of enumerateDates(start, end)) {
       const dayWards: ReportDayWard[] = [];
       for (const wardId of wardIds) {
-        const session = await this.prisma.client.attendanceSession.findFirst({
-          where: { wardId, workDate: date },
-          orderBy: { createdAt: "desc" },
-        });
-        // §8: weekend days without an attendance session are excluded.
-        if (!session && isWeekend(date)) continue;
+        const session = sessionByWardDate.get(`${wardId}:${toDateOnly(date)}`);
+        // Without a session there was no attendance-taking event, so nobody can
+        // be inferred absent, regardless of the day of week.
+        if (!session) continue;
         const roster = (await this.attendance.roster(auth, {
           wardId,
           workDate: toDateOnly(date),
+          sessionId: session.id,
         })) as unknown as RosterRow[];
         const rows: ReportRosterRow[] = [];
         for (const row of roster) {
           totals[row.status] = (totals[row.status] ?? 0) + 1;
-          employeeNumbers.add(row.employee.employeeNumber);
-          rows.push({
+          const reportRow: ReportRosterRow = {
             employeeNumber: row.employee.employeeNumber,
             fullName: row.employee.fullName,
             role: null,
             status: row.status,
             detail: row.detail,
-          });
+          };
+          rows.push(reportRow);
+          rosterEmployees.push({ row: reportRow, employeeId: row.employee.id });
         }
         dayWards.push({
           wardId,
@@ -236,18 +322,14 @@ export class ReportService {
 
     // Enrich roster rows with the employee designation (legacy CSV "Role" column).
     const designations = await this.prisma.client.employee.findMany({
-      where: { employeeNumber: { in: [...employeeNumbers] } },
-      select: { employeeNumber: true, designation: true },
+      where: { id: { in: rosterEmployees.map((item) => item.employeeId) } },
+      select: { id: true, designation: true },
     });
-    const designationByNumber = new Map(
-      designations.map((employee) => [employee.employeeNumber, employee.designation]),
+    const designationById = new Map(
+      designations.map((employee) => [employee.id, employee.designation]),
     );
-    for (const day of days) {
-      for (const ward of day.wards) {
-        for (const row of ward.roster) {
-          row.role = designationByNumber.get(row.employeeNumber) ?? null;
-        }
-      }
+    for (const item of rosterEmployees) {
+      item.row.role = designationById.get(item.employeeId) ?? null;
     }
 
     const workLogs = await this.prisma.client.workLog.findMany({
@@ -284,17 +366,24 @@ export class ReportService {
       challenges: item.challenges,
       completionStatus: item.detail?.completionStatus ?? "COMPLETE",
       outstandingWork: item.detail?.outstandingWork ?? null,
-      photos: samplePeriodPhotos(
-        item.evidence.map((evidence) => ({
-          evidenceId: evidence.id,
-          objectKey: evidence.objectKey,
-          sha256: evidence.sha256,
-          caption: evidence.caption,
-          stage: evidence.stage as EvidenceStage,
-        })),
-        input.kind,
-      ),
+      photos: item.evidence.map((evidence) => ({
+        evidenceId: evidence.id,
+        objectKey: evidence.objectKey,
+        sha256: evidence.sha256,
+        caption: evidence.caption,
+        stage: evidence.stage as EvidenceStage,
+      })),
     }));
+
+    const sampledPhotoIds = new Set(
+      samplePeriodPhotos(
+        work.flatMap((item) => item.photos),
+        input.kind,
+      ).map((photo) => photo.evidenceId),
+    );
+    for (const item of work) {
+      item.photos = item.photos.filter((photo) => sampledPhotoIds.has(photo.evidenceId));
+    }
 
     return {
       scopeType: input.scopeType,
@@ -332,7 +421,7 @@ export class ReportService {
       details: source === "ai" ? "AI enabled" : "Deterministic fallback",
     });
     return {
-      snapshot,
+      snapshot: this.publicSnapshot(snapshot),
       narrative,
       narrativeSource: source,
       recommendations: deterministicRecommendations(snapshot.workLogs),
@@ -346,46 +435,61 @@ export class ReportService {
   ): Promise<Record<string, unknown>> {
     const snapshot = await this.buildSnapshot(auth, input);
     return {
-      snapshot,
+      snapshot: this.publicSnapshot(snapshot),
       narrative: deterministicNarrative(snapshot.totals, snapshot.workLogs),
       recommendations: deterministicRecommendations(snapshot.workLogs),
       title: reportTitle(input.kind, snapshot.scopeName),
     };
   }
 
-  async list(auth: AuthContext, query: ReportQueryInput): Promise<Array<Record<string, unknown>>> {
+  async list(auth: AuthContext, query: ReportQueryInput): Promise<ReportListResult> {
     const { wardIds, subcountyIds, countyIds } = await this.scope.accessibleScopeIds(auth);
-    const reports = await this.prisma.client.report.findMany({
-      orderBy: { createdAt: "desc" },
-      select: {
-        id: true,
-        kind: true,
-        scopeType: true,
-        scopeId: true,
-        periodStart: true,
-        periodEnd: true,
-        status: true,
-        title: true,
-        version: true,
-        finalizedBy: true,
-        finalizedAt: true,
-        createdBy: true,
-        createdAt: true,
-      },
-    });
-    const accessible: Array<Record<string, unknown>> = [];
-    for (const report of reports) {
-      const inScope =
-        report.scopeType === "WARD"
-          ? wardIds.has(report.scopeId)
-          : report.scopeType === "SUBCOUNTY"
-            ? subcountyIds.has(report.scopeId)
-            : countyIds.has(report.scopeId);
-      if (!inScope) continue;
-      if (query.scopeType && report.scopeType !== query.scopeType) continue;
-      if (query.scopeId && report.scopeId !== query.scopeId) continue;
-      if (query.kind && report.kind !== query.kind) continue;
-      accessible.push({
+    const visibleScopes: Prisma.ReportWhereInput[] = [];
+    if (wardIds.size) visibleScopes.push({ scopeType: "WARD", scopeId: { in: [...wardIds] } });
+    if (subcountyIds.size) {
+      visibleScopes.push({ scopeType: "SUBCOUNTY", scopeId: { in: [...subcountyIds] } });
+    }
+    if (countyIds.size) {
+      visibleScopes.push({ scopeType: "COUNTY", scopeId: { in: [...countyIds] } });
+    }
+    if (!visibleScopes.length) {
+      return { items: [], page: query.page, pageSize: query.pageSize, total: 0 };
+    }
+    const where: Prisma.ReportWhereInput = {
+      AND: [
+        { status: "FINALIZED" },
+        { OR: visibleScopes },
+        ...(query.scopeType ? [{ scopeType: query.scopeType }] : []),
+        ...(query.scopeId ? [{ scopeId: query.scopeId }] : []),
+        ...(query.kind ? [{ kind: query.kind }] : []),
+      ],
+    };
+    const [total, reports] = await this.prisma.client.$transaction([
+      this.prisma.client.report.count({ where }),
+      this.prisma.client.report.findMany({
+        where,
+        orderBy: [{ createdAt: "desc" }, { id: "desc" }],
+        skip: (query.page - 1) * query.pageSize,
+        take: query.pageSize,
+        select: {
+          id: true,
+          kind: true,
+          scopeType: true,
+          scopeId: true,
+          periodStart: true,
+          periodEnd: true,
+          status: true,
+          title: true,
+          version: true,
+          finalizedBy: true,
+          finalizedAt: true,
+          createdBy: true,
+          createdAt: true,
+        },
+      }),
+    ]);
+    return {
+      items: reports.map((report) => ({
         id: report.id,
         kind: report.kind,
         scopeType: report.scopeType,
@@ -399,10 +503,11 @@ export class ReportService {
         finalizedAt: report.finalizedAt,
         createdBy: report.createdBy,
         createdAt: report.createdAt,
-      });
-    }
-    const startIndex = (query.page - 1) * query.pageSize;
-    return accessible.slice(startIndex, startIndex + query.pageSize);
+      })),
+      page: query.page,
+      pageSize: query.pageSize,
+      total,
+    };
   }
 
   async get(auth: AuthContext, id: string): Promise<Record<string, unknown>> {
@@ -430,15 +535,10 @@ export class ReportService {
     // so a finalized report never depends on live user data. Prefer the
     // highest-authority assignment so the signature is deterministic even when
     // the user holds several assignments.
-    const finalizingAssignment =
-      auth.assignments.find((assignment) => assignment.role === "SYSTEM_ADMIN") ??
-      auth.assignments[0];
-    const signedTitle =
-      finalizingAssignment?.role === "SYSTEM_ADMIN"
-        ? "Ward Environment Officer"
-        : (finalizingAssignment?.role ?? "SYSTEM_ADMIN").replace(/_/g, " ").replace(/\w\S*/g, (w) => w.charAt(0) + w.slice(1).toLowerCase());
     snapshot.signedBy = auth.displayName;
-    snapshot.signedTitle = signedTitle;
+    snapshot.signedTitle = signerTitle(
+      await this.authorizingReportRoles(auth, input.scopeType, input.scopeId),
+    );
 
     const data: Prisma.ReportUncheckedCreateInput = {
       kind: input.kind,
@@ -458,22 +558,71 @@ export class ReportService {
       evidence: { create: collectReportEvidence(snapshot) },
     };
 
-    const report = await this.prisma.client.report.create({
-      data,
-      include: { evidence: true },
+    const report = await this.prisma.client.$transaction(async (tx) => {
+      const created = await tx.report.create({
+        data,
+        include: { evidence: true },
+      });
+      await this.audit.record({
+        action: "REPORT.FINALIZED",
+        targetType: "Report",
+        targetId: created.id,
+        scopeType: input.scopeType,
+        scopeId: input.scopeId,
+        actorUserId: auth.userId,
+        sourceIp: meta.sourceIp,
+        requestId: meta.requestId,
+        details: `${input.kind} ${input.startDate}..${input.endDate}`,
+      }, tx);
+      return created;
     });
+    return this.toSummary(report);
+  }
+
+  async downloadEvidence(
+    auth: AuthContext,
+    reportId: string,
+    reportEvidenceId: string,
+    meta: RequestMeta,
+  ): Promise<{ buffer: Buffer; contentType: string; filename: string }> {
+    const evidence = await this.prisma.client.reportEvidence.findFirst({
+      where: { id: reportEvidenceId, reportId },
+      include: { report: true },
+    });
+    if (!evidence || evidence.report.status !== "FINALIZED") {
+      throw new NotFoundException("Report evidence not found");
+    }
+    if (!(await this.scope.scopeAccessible(auth, evidence.report.scopeType, evidence.report.scopeId))) {
+      throw new NotFoundException("Report evidence not found");
+    }
+
+    const buffer = await this.storage.read(evidence.objectKey);
+    const actual = createHash("sha256").update(buffer).digest("hex");
+    if (actual !== evidence.sha256) {
+      throw new NotFoundException("Report evidence is missing or corrupted");
+    }
+    const source = evidence.evidenceId
+      ? await this.prisma.client.evidence.findUnique({
+          where: { id: evidence.evidenceId },
+          select: { contentType: true },
+        })
+      : null;
     await this.audit.record({
-      action: "REPORT.FINALIZED",
-      targetType: "Report",
-      targetId: report.id,
-      scopeType: input.scopeType,
-      scopeId: input.scopeId,
+      action: "REPORT.EVIDENCE_ACCESSED",
+      targetType: "ReportEvidence",
+      targetId: evidence.id,
+      scopeType: evidence.report.scopeType,
+      scopeId: evidence.report.scopeId,
       actorUserId: auth.userId,
       sourceIp: meta.sourceIp,
       requestId: meta.requestId,
-      details: `${input.kind} ${input.startDate}..${input.endDate}`,
+      details: evidence.reportId,
     });
-    return this.toSummary(report);
+    return {
+      buffer,
+      contentType: source?.contentType ?? "application/octet-stream",
+      filename: `report-evidence-${evidence.id}`,
+    };
   }
 
   // -- CSV export -------------------------------------------------------------
@@ -483,10 +632,6 @@ export class ReportService {
     id: string,
     meta: RequestMeta,
   ): Promise<{ buffer: Buffer; filename: string }> {
-    // §8: read_only benchmark accounts cannot export operational data.
-    if (auth.assignments.some((assignment) => assignment.role === "READ_ONLY")) {
-      throw new ForbiddenException("Read-only benchmark accounts cannot export operational data");
-    }
     const report = await this.findOrThrow(id);
     if (!(await this.scope.scopeAccessible(auth, report.scopeType, report.scopeId))) {
       throw new NotFoundException("Report not found");

@@ -7,7 +7,24 @@ export const paginationSchema = z.object({
   pageSize: z.coerce.number().int().min(1).max(200).default(25),
 });
 
-export const isoDateSchema = z.coerce.date().transform((d) => d.toISOString().slice(0, 10));
+export const isoDateSchema = z
+  .string()
+  .regex(/^\d{4}-\d{2}-\d{2}$/, "Date must use YYYY-MM-DD")
+  .refine((value) => {
+    const date = new Date(`${value}T00:00:00.000Z`);
+    return !Number.isNaN(date.getTime()) && date.toISOString().slice(0, 10) === value;
+  }, "Date must be a real calendar date");
+
+export const strictBooleanSchema = z.preprocess((value) => {
+  if (value === "true") return true;
+  if (value === "false") return false;
+  return value;
+}, z.boolean());
+
+export const optionalPaginationSchema = z.object({
+  page: z.coerce.number().int().min(1).default(1),
+  pageSize: z.coerce.number().int().min(1).max(200).default(100),
+});
 
 export const emailSchema = z
   .string()

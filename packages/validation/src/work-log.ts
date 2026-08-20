@@ -1,21 +1,21 @@
 import { z } from "zod";
-import { idSchema } from "./common";
+import { idSchema, isoDateSchema, optionalPaginationSchema, strictBooleanSchema } from "./common";
 
 export const createWorkLogSchema = z
   .object({
     wardId: z.string().cuid(),
-    workDate: z.string().regex(/^\d{4}-\d{2}-\d{2}$/),
+    workDate: isoDateSchema,
     activity: z.string().trim().min(3).max(160),
     location: z.string().trim().min(3).max(160),
     areasRoads: z.string().trim().min(3),
     description: z.string().trim().min(3),
     numberOfTrips: z.coerce.number().int().min(0).default(0),
-    wasteTransferInvolved: z.coerce.boolean().default(false),
+    wasteTransferInvolved: strictBooleanSchema.default(false),
     truckId: z.string().trim().toUpperCase().default(""),
     backhoeId: z.string().trim().toUpperCase().default(""),
     staffCount: z.coerce.number().int().min(0).default(0),
     challenges: z.string().trim().max(2000).optional().nullable(),
-    cleanupDone: z.coerce.boolean().default(false),
+    cleanupDone: strictBooleanSchema.default(false),
     cleanupStakeholders: z.string().trim().max(2000).default(""),
     climateTeamCount: z.coerce.number().int().min(0).default(0),
     completionStatus: z.enum(["COMPLETE", "INCOMPLETE"]).default("COMPLETE"),
@@ -40,12 +40,13 @@ export const createWorkLogSchema = z
 
 export const workLogActionSchema = z.object({
   action: z.enum(["APPROVE", "REJECT"]),
+  expectedVersion: z.number().int().positive(),
   reviewNote: z.string().trim().max(2000).default(""),
 });
 
-export const workLogQuerySchema = z.object({
+export const workLogQuerySchema = optionalPaginationSchema.extend({
   wardId: idSchema.optional(),
-  workDate: z.string().regex(/^\d{4}-\d{2}-\d{2}$/).optional(),
+  workDate: isoDateSchema.optional(),
   status: z.enum(["SUBMITTED", "APPROVED", "REJECTED"]).optional(),
 });
 

@@ -120,7 +120,7 @@ describe("work operations (integration)", () => {
       url: `/api/v1/work-logs/${id}/actions`,
       cookie: session.cookie,
       csrf: session.csrf,
-      payload,
+      payload: { expectedVersion: 1, ...payload },
     });
     return { status: response.statusCode, body: response.json() };
   }
@@ -215,6 +215,14 @@ describe("work operations (integration)", () => {
     expect(status).toBe(201);
     expect((result as Record<string, any>).status).toBe("APPROVED");
     expect((result as Record<string, any>).reviewedBy).toBeTruthy();
+  });
+
+  it("rejects a stale work-log transition version", async () => {
+    const { body } = await createWorkLog(workLogPayload(makinaWard.id));
+    const id = (body as Record<string, any>).id;
+    const stale = await action(id, { action: "APPROVE", expectedVersion: 2 });
+    expect(stale.status).toBe(409);
+    expect((await prisma.workLog.findUniqueOrThrow({ where: { id } })).status).toBe("SUBMITTED");
   });
 
   it("rejects a submitted work log with a note", async () => {

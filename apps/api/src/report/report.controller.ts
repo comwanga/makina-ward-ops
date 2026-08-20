@@ -1,5 +1,5 @@
-import { Body, Controller, Get, Param, Post, Query, Req, StreamableFile } from "@nestjs/common";
-import type { FastifyRequest } from "fastify";
+import { Body, Controller, Get, Header, Param, Post, Query, Req, Res, StreamableFile } from "@nestjs/common";
+import type { FastifyReply, FastifyRequest } from "fastify";
 import {
   reportAiDraftSchema,
   reportFinalizeSchema,
@@ -23,19 +23,27 @@ export class ReportController {
 
   @RequireCapability("REPORTS_READ")
   @Get()
-  list(@Query() query: Record<string, string>, @CurrentUser() auth: AuthContext | undefined) {
+  async list(
+    @Query() query: Record<string, string>,
+    @CurrentUser() auth: AuthContext | undefined,
+    @Res({ passthrough: true }) response: FastifyReply,
+  ) {
     const input = reportQuerySchema.parse(query);
-    return this.reports.list(auth!, input);
+    const result = await this.reports.list(auth!, input);
+    response.header("x-total-count", String(result.total));
+    response.header("x-page", String(result.page));
+    response.header("x-page-size", String(result.pageSize));
+    return result.items;
   }
 
-  @RequireCapability("REPORTS_READ")
+  @RequireCapability("REPORTS_GENERATE")
   @Get("preview")
   preview(@Query() query: Record<string, string>, @CurrentUser() auth: AuthContext | undefined) {
     const input = reportPreviewQuerySchema.parse(query);
     return this.reports.preview(auth!, input);
   }
 
-  @RequireCapability("REPORTS_FINALIZE")
+  @RequireCapability("REPORTS_GENERATE")
   @Post("ai-draft")
   aiDraft(
     @Body() body: unknown,
@@ -58,12 +66,28 @@ export class ReportController {
   }
 
   @RequireCapability("REPORTS_READ")
+  @Header("Cache-Control", "private, no-store")
+  @Get(":id/evidence/:evidenceId")
+  async evidence(
+    @Param("id") id: string,
+    @Param("evidenceId") evidenceId: string,
+    @CurrentUser() auth: AuthContext | undefined,
+    @Req() request: FastifyRequest,
+  ) {
+    const result = await this.reports.downloadEvidence(auth!, id, evidenceId, meta(request));
+    return new StreamableFile(result.buffer, {
+      type: result.contentType,
+      disposition: `inline; filename="${result.filename}"`,
+    });
+  }
+
+  @RequireCapability("REPORTS_READ")
   @Get(":id")
   get(@Param("id") id: string, @CurrentUser() auth: AuthContext | undefined) {
     return this.reports.get(auth!, id);
   }
 
-  @RequireCapability("REPORTS_READ")
+  @RequireCapability("REPORTS_EXPORT")
   @Get(":id/csv")
   async csv(
     @Param("id") id: string,
