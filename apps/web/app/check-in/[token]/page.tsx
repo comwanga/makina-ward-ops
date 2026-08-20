@@ -26,7 +26,6 @@ function getGeolocation(): Promise<{ latitude: number; longitude: number } | nul
 export default function CheckInPage({ params }: { params: Promise<{ token: string }> }) {
   const [token, setToken] = useState<string>("");
   const [employeeNumber, setEmployeeNumber] = useState("");
-  const [phoneLast4, setPhoneLast4] = useState("");
   const [submitting, setSubmitting] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [result, setResult] = useState<CheckInResponse | null>(null);
@@ -44,7 +43,6 @@ export default function CheckInPage({ params }: { params: Promise<{ token: strin
       const response = await checkInPublic(
         token,
         employeeNumber,
-        phoneLast4,
         geo?.latitude ?? null,
         geo?.longitude ?? null,
       );
@@ -77,26 +75,18 @@ export default function CheckInPage({ params }: { params: Promise<{ token: strin
           </div>
         ) : (
           <form className="auth-form" onSubmit={onSubmit}>
-            <label htmlFor="employeeNumber">Employee number</label>
+            <label htmlFor="employeeNumber">Payroll/Employee ID</label>
             <input
               id="employeeNumber"
               inputMode="numeric"
               autoComplete="off"
-              placeholder="e.g. 20250100001"
+              placeholder="e.g. 20230228567"
               pattern="(19|20)\d{9}"
+              maxLength={11}
               value={employeeNumber}
-              onChange={(e) => setEmployeeNumber(e.target.value)}
-              required
-            />
-            <label htmlFor="phoneLast4">Last 4 digits of your phone number</label>
-            <input
-              id="phoneLast4"
-              inputMode="numeric"
-              autoComplete="tel"
-              pattern="\d{4}"
-              maxLength={4}
-              value={phoneLast4}
-              onChange={(event) => setPhoneLast4(event.target.value.replace(/\D/g, "").slice(0, 4))}
+              onChange={(event) =>
+                setEmployeeNumber(event.target.value.replace(/\D/g, "").slice(0, 11))
+              }
               required
             />
             <StatusMessages error={error} />

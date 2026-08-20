@@ -171,7 +171,6 @@ describe("checkInSchema", () => {
     const parsed = checkInSchema.parse({
       sessionToken: "0123456789abcdef0123456789abcdef",
       employeeNumber: "20230464669",
-      phoneLast4: "5601",
       latitude: -1.3,
       longitude: 36.8,
     });
@@ -183,7 +182,6 @@ describe("checkInSchema", () => {
       checkInSchema.parse({
         sessionToken: "0123456789abcdef0123456789abcdef",
         employeeNumber: "123",
-        phoneLast4: "5601",
       }),
     ).toThrow();
   });
@@ -193,7 +191,6 @@ describe("checkInSchema", () => {
       checkInSchema.parse({
         sessionToken: "0123456789abcdef0123456789abcdef",
         employeeNumber: "20230464669",
-        phoneLast4: "5601",
         latitude: 200,
       }),
     ).toThrow();

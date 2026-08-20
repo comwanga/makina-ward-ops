@@ -615,13 +615,12 @@ export interface CheckInResponse {
 export async function checkInPublic(
   sessionToken: string,
   employeeNumber: string,
-  phoneLast4: string,
   latitude?: number | null,
   longitude?: number | null,
 ): Promise<CheckInResponse> {
   return apiFetch<CheckInResponse>(`/attendance/sessions/${encodeURIComponent(sessionToken)}/check-in`, {
     method: "POST",
-    body: { employeeNumber, phoneLast4, latitude, longitude },
+    body: { employeeNumber, latitude, longitude },
   });
 }
 

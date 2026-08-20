@@ -1,5 +1,11 @@
 import { z } from "zod";
-import { idSchema, isoDateSchema, optionalPaginationSchema, strictBooleanSchema } from "./common";
+import {
+  employeeNumberSchema,
+  idSchema,
+  isoDateSchema,
+  optionalPaginationSchema,
+  strictBooleanSchema,
+} from "./common";
 
 export const SESSION_DURATIONS = [30, 60, 120, 240, 480] as const;
 
@@ -18,8 +24,7 @@ export const createAttendanceSessionSchema = z.object({
 
 export const checkInSchema = z.object({
   sessionToken: z.string().min(16),
-  employeeNumber: z.string().trim().regex(/^(?:19|20)\d{9}$/),
-  phoneLast4: z.string().trim().regex(/^\d{4}$/, "Enter the last four digits of your phone number"),
+  employeeNumber: employeeNumberSchema,
   latitude: z.number().min(-90).max(90).optional().nullable(),
   longitude: z.number().min(-180).max(180).optional().nullable(),
 });

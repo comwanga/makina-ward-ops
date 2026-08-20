@@ -263,8 +263,8 @@ export default function StaffPage() {
           <h2>Add staff member</h2>
           <form className="grid-form" onSubmit={onCreate}>
             <label>
-              Employee number
-              <input value={form.employeeNumber} onChange={(event) => setForm({ ...form, employeeNumber: event.target.value })} placeholder="e.g. 20250100001" pattern="(19|20)\d{9}" required />
+              Payroll/Employee ID
+              <input value={form.employeeNumber} onChange={(event) => setForm({ ...form, employeeNumber: event.target.value.replace(/\D/g, "").slice(0, 11) })} placeholder="e.g. 20230228567" pattern="(19|20)\d{9}" maxLength={11} required />
             </label>
             <label>
               Full name

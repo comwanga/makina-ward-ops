@@ -39,4 +39,31 @@ describe("staff roster parser", () => {
       rosterStatus: "ON_DUTY",
     });
   });
+
+  it("recognizes county payroll headers and normalizes nine-digit Kenyan phones", async () => {
+    const workbook = new ExcelJS.Workbook();
+    const sheet = workbook.addWorksheet("Employees");
+    sheet.addRow(["name", "phone", "Payroll/Employee ID", "status", "residence"]);
+    sheet.addRow(["ALFRED ZECKY OYOO", 704722195, 20230228567, "ON DUTY", "LANGATA"]);
+    sheet.addRow(["PERIS NJOROGE", 705302543, 20240192904, "ANNUAL LEAVE", "KAWANGWARE"]);
+    const data = await workbook.xlsx.writeBuffer();
+
+    const rows = await parseStaffImport(Buffer.from(new Uint8Array(data)), "employees.xlsx");
+    expect(rows.map((row) => row.value)).toEqual([
+      {
+        fullName: "ALFRED ZECKY OYOO",
+        phone: "0704722195",
+        employeeNumber: "20230228567",
+        rosterStatus: "ON_DUTY",
+        residence: "LANGATA",
+      },
+      {
+        fullName: "PERIS NJOROGE",
+        phone: "0705302543",
+        employeeNumber: "20240192904",
+        rosterStatus: "ANNUAL_LEAVE",
+        residence: "KAWANGWARE",
+      },
+    ]);
+  });
 });

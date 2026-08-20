@@ -5,6 +5,8 @@ const HEADER_ALIASES: Record<string, Set<string>> = {
     "employee id",
     "employee number",
     "payroll id",
+    "payroll employee id",
+    "payroll employee number",
     "payroll no",
     "payroll number",
     "staff id",
@@ -85,6 +87,13 @@ function normalizeStatus(value: string): string {
   return value.trim().toUpperCase().replace(/\s+/g, "_");
 }
 
+function normalizeImportedPhone(value: string): string {
+  const phone = value.trim().replace(/[^0-9+]/g, "");
+  if (/^[17]\d{8}$/.test(phone)) return `0${phone}`;
+  if (/^254\d{9}$/.test(phone)) return `+${phone}`;
+  return phone;
+}
+
 export async function parseStaffImport(
   content: Buffer,
   filename: string,
@@ -124,6 +133,7 @@ export async function parseStaffImport(
       }
     });
     if (!Object.values(value).some(Boolean)) return [];
+    if (value.phone !== undefined) value.phone = normalizeImportedPhone(value.phone);
     if (value.rosterStatus !== undefined) value.rosterStatus = normalizeStatus(value.rosterStatus);
     return [{ rowNumber: located.index + offset + 2, value }];
   });

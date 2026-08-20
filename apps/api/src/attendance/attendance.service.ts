@@ -82,10 +82,9 @@ export class AttendanceService {
   private async findCheckInEmployee(
     employeeNumber: string,
     wardId: string,
-    phoneLast4: string,
   ): Promise<Prisma.EmployeeGetPayload<{ include: { assignments: true } }> | null> {
     const homed = await this.prisma.client.employee.findFirst({
-      where: { employeeNumber, phone: { endsWith: phoneLast4 }, active: true, wardId },
+      where: { employeeNumber, active: true, wardId },
       include: { assignments: true },
     });
     if (homed) {
@@ -94,7 +93,6 @@ export class AttendanceService {
     return this.prisma.client.employee.findFirst({
       where: {
         employeeNumber,
-        phone: { endsWith: phoneLast4 },
         active: true,
         assignments: { some: { wardId, endedAt: null } },
       },
@@ -280,7 +278,7 @@ export class AttendanceService {
       throw new BadRequestException("This attendance session is not open. Contact your supervisor.");
     }
 
-    const employee = await this.findCheckInEmployee(input.employeeNumber, session.wardId, input.phoneLast4);
+    const employee = await this.findCheckInEmployee(input.employeeNumber, session.wardId);
 
     if (!employee) {
       this.throttle.recordFailure(key);
@@ -292,9 +290,9 @@ export class AttendanceService {
         scopeId: session.wardId,
         sourceIp: meta.sourceIp,
         requestId: meta.requestId,
-        details: "Employee ID or phone verification failed",
+        details: "Payroll number was not found in the session ward",
       });
-      throw new BadRequestException("Employee ID or phone verification failed.");
+      throw new BadRequestException("Payroll number was not found for this attendance session.");
     }
 
     const status: AttendanceStatus =
@@ -331,6 +329,7 @@ export class AttendanceService {
         ok: true,
         status,
         checkedAt: record.checkedAt,
+        employee: { id: employee.id, fullName: employee.fullName },
       };
     } catch (error) {
       if (error instanceof Prisma.PrismaClientKnownRequestError && error.code === "P2002") {
