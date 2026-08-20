@@ -1,6 +1,7 @@
 import { Module } from "@nestjs/common";
 import { APP_GUARD } from "@nestjs/core";
 import { LoginThrottleService } from "./login-throttle.service";
+import { IpThrottleService } from "./ip-throttle.service";
 import { AuthService } from "./auth.service";
 import { AuthController } from "./auth.controller";
 import { SessionAuthGuard } from "./session.guard";
@@ -10,12 +11,13 @@ import { CapabilitiesGuard } from "../authorization/capabilities.guard";
 @Module({
   providers: [
     LoginThrottleService,
+    IpThrottleService,
     AuthService,
     { provide: APP_GUARD, useClass: SessionAuthGuard },
     { provide: APP_GUARD, useClass: CapabilitiesGuard },
     { provide: APP_GUARD, useClass: CsrfGuard },
   ],
   controllers: [AuthController],
-  exports: [AuthService, LoginThrottleService],
+  exports: [AuthService, LoginThrottleService, IpThrottleService],
 })
 export class AuthModule {}

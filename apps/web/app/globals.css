@@ -7,10 +7,16 @@
   --ink: #17201b;
   --muted: #68736c;
   --amber: #ba7117;
+  --line: rgba(35, 91, 52, 0.2);
 }
 
 * {
   box-sizing: border-box;
+}
+
+html {
+  -webkit-text-size-adjust: 100%;
+  text-size-adjust: 100%;
 }
 
 html,
@@ -25,6 +31,11 @@ body {
     "Segoe UI", sans-serif;
   color: var(--ink);
   position: relative;
+}
+
+:focus-visible {
+  outline: 2px solid var(--green);
+  outline-offset: 2px;
 }
 
 /* Persistent background canvas */
@@ -105,7 +116,7 @@ body {
 
 .primary-btn {
   display: inline-block;
-  padding: 11px 24px;
+  padding: 13px 26px;
   border-radius: 8px;
   background: var(--green);
   color: #fff;
@@ -173,15 +184,15 @@ body {
 }
 
 .auth-form input {
-  padding: 10px 12px;
+  padding: 12px 12px;
   border: 1px solid rgba(35, 91, 52, 0.25);
   border-radius: 8px;
-  font-size: 14px;
+  font-size: 16px;
 }
 
 .auth-form button {
   margin-top: 16px;
-  padding: 11px 16px;
+  padding: 13px 16px;
   border: none;
   border-radius: 8px;
   background: var(--green);
@@ -216,6 +227,7 @@ body {
 
 .dash-header {
   display: flex;
+  flex-wrap: wrap;
   align-items: center;
   gap: 14px;
   padding: 12px 0 20px;
@@ -235,7 +247,8 @@ body {
 .dash-nav {
   margin-left: auto;
   display: flex;
-  gap: 16px;
+  flex-wrap: wrap;
+  gap: 4px 16px;
 }
 
 .dash-nav a {
@@ -243,6 +256,7 @@ body {
   font-weight: 600;
   font-size: 14px;
   text-decoration: none;
+  padding: 6px 2px;
 }
 
 .dash-nav a[aria-current="page"] {
@@ -285,15 +299,15 @@ body {
 .grid-form input,
 .grid-form select,
 .inline-label select {
-  padding: 9px 11px;
+  padding: 12px 11px;
   border: 1px solid rgba(35, 91, 52, 0.25);
   border-radius: 8px;
-  font-size: 14px;
+  font-size: 16px;
   background: var(--paper);
 }
 
 .grid-form button {
-  padding: 10px 16px;
+  padding: 13px 16px;
   border: none;
   border-radius: 8px;
   background: var(--green);
@@ -425,7 +439,60 @@ body {
   font-size: 13px;
   font-weight: 600;
   cursor: pointer;
-  padding: 0;
+  padding: 6px 4px;
+  border-radius: 6px;
+}
+
+.review-actions {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+}
+
+@media (max-width: 720px) {
+  .home {
+    padding: 40px 18px;
+  }
+
+  .hero h1 {
+    font-size: 26px;
+  }
+
+  .home-actions {
+    flex-direction: column;
+    gap: 14px;
+  }
+
+  .dashboard {
+    padding: 16px 12px 56px;
+  }
+
+  .dash-nav {
+    width: 100%;
+    gap: 4px 14px;
+  }
+
+  .dash-title h1 {
+    font-size: 20px;
+  }
+
+  .panel {
+    padding: 16px 14px;
+  }
+
+  .grid-form {
+    grid-template-columns: 1fr;
+  }
+
+  .data-table {
+    font-size: 12px;
+  }
+
+  .review-actions {
+    flex-direction: column;
+    align-items: stretch;
+    gap: 8px;
+  }
 }
 
 .checkin-link {

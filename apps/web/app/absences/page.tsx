@@ -3,23 +3,9 @@
 import { FormEvent, useCallback, useEffect, useRef, useState } from "react";
 import { useRouter } from "next/navigation";
 import { BrandLogo } from "@/components/BrandLogo";
-import {
-  Absence,
-  AbsenceAction,
-  AbsenceDocument,
-  AbsenceKind,
-  ApiError,
-  Employee,
-  Ward,
-  absenceAction,
-  createAbsence,
-  downloadAbsenceDocument,
-  fetchMe,
-  listAbsences,
-  listStaff,
-  listWards,
-  uploadAbsenceDocument,
-} from "@/lib/api";
+import { DashNav } from "@/components/DashNav";
+import { Absence, AbsenceAction, AbsenceDocument, AbsenceKind, ApiError, Employee, Ward, absenceAction, createAbsence, downloadAbsenceDocument, fetchMe, listAbsences, listStaff, listWards, uploadAbsenceDocument } from "@/lib/api";
+import { compressImage } from "@/lib/image";
 
 const KINDS: AbsenceKind[] = [
   "ANNUAL_LEAVE",
@@ -72,6 +58,8 @@ export default function AbsencesPage() {
   const [error, setError] = useState<string | null>(null);
   const [notice, setNotice] = useState<string | null>(null);
   const [submitting, setSubmitting] = useState(false);
+  const [uploading, setUploading] = useState(false);
+  const [uploadProgress, setUploadProgress] = useState<number | null>(null);
   const [form, setForm] = useState({
     employeeId: "",
     kind: "ANNUAL_LEAVE" as AbsenceKind,
@@ -161,11 +149,18 @@ export default function AbsencesPage() {
     if (!file) return;
     setError(null);
     setNotice(null);
+    setUploading(true);
+    setUploadProgress(0);
     try {
-      await uploadAbsenceDocument(absence.id, file, category);
+      const prepared = await compressImage(file);
+      await uploadAbsenceDocument(absence.id, prepared, category, setUploadProgress);
+      setUploading(false);
+      setUploadProgress(null);
       setNotice("Document uploaded.");
       setAbsences(await listAbsences());
     } catch (err) {
+      setUploading(false);
+      setUploadProgress(null);
       setError(err instanceof ApiError ? err.message : "Unable to upload document");
     }
   }
@@ -201,13 +196,7 @@ export default function AbsencesPage() {
           <p className="eyebrow">MAZINGIRA OPS · ABSENCE MANAGEMENT</p>
           <h1>Absences</h1>
         </div>
-        <nav className="dash-nav">
-          <a href="/">Home</a>
-          <a href="/staff">Staff</a>
-          <a href="/attendance">Attendance</a>
-          <a href="/absences" aria-current="page">Absences</a>
-          <a href="/worklogs">Work logs</a>
-        </nav>
+        <DashNav />
       </header>
 
       {can("ABSENCE_MANAGE") && (
@@ -354,10 +343,12 @@ export default function AbsencesPage() {
                   <td>
                     <div className="doc-actions">
                       {can("ABSENCE_MANAGE") && (
-                        <DocumentUploadRow
-                          absence={absence}
-                          onUploaded={(file, category) => void onUploadDocument(absence, file, category)}
-                        />
+<DocumentUploadRow
+                        absence={absence}
+                        onUploaded={(file, category) => void onUploadDocument(absence, file, category)}
+                        uploading={uploading}
+                        uploadProgress={uploadProgress}
+                      />
                       )}
                       {actionsFor(absence).map((item) => (
                         <button
@@ -383,9 +374,13 @@ export default function AbsencesPage() {
 function DocumentUploadRow({
   absence,
   onUploaded,
+  uploading,
+  uploadProgress,
 }: {
   absence: Absence;
   onUploaded: (file: File | null, category: string) => void;
+  uploading: boolean;
+  uploadProgress: number | null;
 }) {
   const inputRef = useRef<HTMLInputElement>(null);
   const [category, setCategory] = useState(
@@ -397,6 +392,7 @@ function DocumentUploadRow({
         value={category}
         onChange={(e) => setCategory(e.target.value)}
         aria-label="Document category"
+        disabled={uploading}
       >
         {DOCUMENT_CATEGORIES.map((item) => (
           <option key={item} value={item}>
@@ -409,10 +405,15 @@ function DocumentUploadRow({
         type="file"
         accept="application/pdf,image/jpeg,image/png"
         className="visually-hidden"
+        disabled={uploading}
         onChange={(e) => onUploaded(e.target.files?.[0] ?? null, category)}
       />
-      <button className="link-btn" onClick={() => inputRef.current?.click()}>
-        Upload
+      <button
+        className="link-btn"
+        onClick={() => inputRef.current?.click()}
+        disabled={uploading}
+      >
+        {uploading ? (uploadProgress !== null ? `uploading ${uploadProgress}%` : "preparing…") : "Upload"}
       </button>
     </>
   );

@@ -3,9 +3,13 @@ import { PrismaService } from "../prisma/prisma.service";
 import { APP_CONFIG } from "../config/config.module";
 import type { AppConfig } from "../config/config";
 import { AuditService } from "../audit/audit.service";
-import { hashPassword, hashToken, randomCsrfToken, randomSessionToken, verifyPassword } from "../common/crypto";
+import { hashPassword, hashToken, randomCsrfToken, randomSessionToken, tokensEqual, verifyPassword } from "../common/crypto";
 import { sessionExpiry, AuthContext, AuthAssignment } from "./auth-context";
 import { LoginThrottleService } from "./login-throttle.service";
+import { IpThrottleService } from "./ip-throttle.service";
+
+const BOOTSTRAP_LIMIT = 20;
+const BOOTSTRAP_WINDOW_MS = 15 * 60 * 1000;
 
 export interface AuthUserSummary {
   id: string;
@@ -29,19 +33,24 @@ export class AuthService {
     @Inject(APP_CONFIG) private readonly config: AppConfig,
     private readonly prisma: PrismaService,
     private readonly throttle: LoginThrottleService,
+    private readonly ipThrottle: IpThrottleService,
     private readonly audit: AuditService,
   ) {}
 
-  async bootstrapAdmin(input: {
-    setupToken: string;
-    email: string;
-    password: string;
-    displayName?: string;
-  }): Promise<AuthUserSummary> {
+  async bootstrapAdmin(
+    input: {
+      setupToken: string;
+      email: string;
+      password: string;
+      displayName?: string;
+    },
+    meta: { sourceIp?: string; requestId?: string } = {},
+  ): Promise<AuthUserSummary> {
+    this.ipThrottle.check(`bootstrap|${meta.sourceIp ?? "unknown"}`, BOOTSTRAP_LIMIT, BOOTSTRAP_WINDOW_MS);
     if (!this.config.ownerSetupToken) {
       throw new ForbiddenException("Owner setup is not enabled");
     }
-    if (input.setupToken !== this.config.ownerSetupToken) {
+    if (!tokensEqual(input.setupToken, this.config.ownerSetupToken)) {
       throw new ForbiddenException("Invalid setup token");
     }
 

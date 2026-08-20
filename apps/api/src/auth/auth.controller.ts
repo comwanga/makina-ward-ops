@@ -16,9 +16,12 @@ export class AuthController {
 
   @Public()
   @Post("bootstrap")
-  async bootstrap(@Body() body: unknown) {
+  async bootstrap(@Body() body: unknown, @Req() request: FastifyRequest) {
     const input = bootstrapSchema.parse(body);
-    const user = await this.auth.bootstrapAdmin(input);
+    const user = await this.auth.bootstrapAdmin(input, {
+      sourceIp: request.ip,
+      requestId: request.headers["x-request-id"] as string | undefined,
+    });
     return { user };
   }
 

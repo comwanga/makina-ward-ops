@@ -3,6 +3,7 @@
 import { FormEvent, useCallback, useEffect, useState } from "react";
 import { useRouter } from "next/navigation";
 import { BrandLogo } from "@/components/BrandLogo";
+import { DashNav } from "@/components/DashNav";
 import {
   ApiError,
   AttendanceRecord,
@@ -108,13 +109,7 @@ export default function AttendancePage() {
           <p className="eyebrow">MAZINGIRA OPS · ATTENDANCE</p>
           <h1>Attendance</h1>
         </div>
-        <nav className="dash-nav">
-          <a href="/">Home</a>
-          <a href="/staff">Staff</a>
-          <a href="/attendance" aria-current="page">Attendance</a>
-          <a href="/absences">Absences</a>
-          <a href="/worklogs">Work logs</a>
-        </nav>
+        <DashNav />
       </header>
 
       <section className="panel">

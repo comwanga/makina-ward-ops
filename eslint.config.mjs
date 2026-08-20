@@ -13,6 +13,7 @@ export default tseslint.config(
       "**/next-env.d.ts",
       "**/next.config.mjs",
       "**/*.config.ts",
+      "apps/web/public/sw.js",
       ".venv/**",
       ".packages/**",
       "data/**",

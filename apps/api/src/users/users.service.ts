@@ -10,7 +10,11 @@ import { PrismaService } from "../prisma/prisma.service";
 import { AuditService } from "../audit/audit.service";
 import { AuthContext } from "../auth/auth-context";
 import { ScopeService } from "../authorization/scope.service";
+import { IpThrottleService } from "../auth/ip-throttle.service";
 import { hashPassword } from "../common/crypto";
+
+const ACCESS_REQUEST_LIMIT = 20;
+const ACCESS_REQUEST_WINDOW_MS = 60 * 60 * 1000;
 
 export interface RequestAccessInput {
   displayName: string;
@@ -40,9 +44,15 @@ export class UsersService {
     private readonly prisma: PrismaService,
     private readonly audit: AuditService,
     private readonly scope: ScopeService,
+    private readonly ipThrottle: IpThrottleService,
   ) {}
 
   async requestAccess(input: RequestAccessInput, meta: RequestMeta): Promise<{ id: string }> {
+    this.ipThrottle.check(
+      `access-request|${meta.sourceIp ?? "unknown"}`,
+      ACCESS_REQUEST_LIMIT,
+      ACCESS_REQUEST_WINDOW_MS,
+    );
     const existingUser = await this.prisma.client.user.findUnique({
       where: { email: input.email },
     });

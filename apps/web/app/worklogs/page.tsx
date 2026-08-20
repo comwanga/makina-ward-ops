@@ -3,23 +3,9 @@
 import { FormEvent, useCallback, useEffect, useState } from "react";
 import { useRouter } from "next/navigation";
 import { BrandLogo } from "@/components/BrandLogo";
-import {
-  ApiError,
-  CompletionStatus,
-  Evidence,
-  EvidenceStage,
-  Ward,
-  WorkLog,
-  WorkLogAction,
-  createWorkLog,
-  downloadEvidence,
-  fetchMe,
-  listEvidence,
-  listWards,
-  listWorkLogs,
-  uploadEvidence,
-  workLogAction,
-} from "@/lib/api";
+import { DashNav } from "@/components/DashNav";
+import { ApiError, CompletionStatus, Evidence, EvidenceStage, Ward, WorkLog, WorkLogAction, createWorkLog, downloadEvidence, fetchMe, listEvidence, listWards, listWorkLogs, uploadEvidence, workLogAction } from "@/lib/api";
+import { compressImage } from "@/lib/image";
 
 const STAGES: EvidenceStage[] = ["BEFORE", "DURING", "AFTER"];
 
@@ -49,6 +35,8 @@ export default function WorkLogsPage() {
   const [error, setError] = useState<string | null>(null);
   const [notice, setNotice] = useState<string | null>(null);
   const [submitting, setSubmitting] = useState(false);
+  const [uploading, setUploading] = useState<string | null>(null);
+  const [uploadProgress, setUploadProgress] = useState<number | null>(null);
   const [form, setForm] = useState({
     wardId: "",
     workDate: nairobiToday(),
@@ -116,10 +104,24 @@ export default function WorkLogsPage() {
     if (!file) return;
     setError(null);
     setNotice(null);
+    setUploading(stage);
+    setUploadProgress(0);
     try {
-      await uploadEvidence(workLog.id, file, stage, "");
+      const prepared = await compressImage(file);
+      await uploadEvidence(
+        workLog.id,
+        prepared,
+        stage,
+        "",
+        setUploadProgress,
+      );
+      setUploading(null);
+      setUploadProgress(null);
+      setNotice(`${stage.toLowerCase()} photo uploaded.`);
       await loadEvidenceFor(workLog.id);
     } catch (err) {
+      setUploading(null);
+      setUploadProgress(null);
       setError(err instanceof ApiError ? err.message : "Unable to upload photo");
     }
   }
@@ -196,13 +198,7 @@ export default function WorkLogsPage() {
           <p className="eyebrow">MAZINGIRA OPS · WORK OPERATIONS</p>
           <h1>Work logs</h1>
         </div>
-        <nav className="dash-nav">
-          <a href="/">Home</a>
-          <a href="/staff">Staff</a>
-          <a href="/attendance">Attendance</a>
-          <a href="/absences">Absences</a>
-          <a href="/worklogs" aria-current="page">Work logs</a>
-        </nav>
+        <DashNav />
       </header>
 
       {can("WORK_CREATE") && (
@@ -430,6 +426,8 @@ export default function WorkLogsPage() {
                         canUpload={can("WORK_CREATE")}
                         onOpen={onOpenEvidence}
                         onUploaded={(file, stage) => void onUploadEvidence(workLog, file, stage)}
+                        uploadingStage={uploading}
+                        uploadProgress={uploadProgress}
                       />
                     )}
                   </td>
@@ -461,11 +459,15 @@ function EvidenceCell({
   canUpload,
   onOpen,
   onUploaded,
+  uploadingStage,
+  uploadProgress,
 }: {
   evidence: Evidence[];
   canUpload: boolean;
   onOpen: (evidence: Evidence) => void;
   onUploaded: (file: File | null, stage: EvidenceStage) => void;
+  uploadingStage: string | null;
+  uploadProgress: number | null;
 }) {
   return (
     <div className="doc-list">
@@ -489,11 +491,17 @@ function EvidenceCell({
             ))}
             {canUpload && (
               <label className="link-btn">
-                + upload
+                {uploadingStage === stage
+                  ? uploadProgress !== null
+                    ? `uploading ${uploadProgress}%`
+                    : "preparing…"
+                  : "+ upload"}
                 <input
                   type="file"
                   accept="image/jpeg,image/png"
+                  capture="environment"
                   className="visually-hidden"
+                  disabled={uploadingStage !== null}
                   onChange={(e) => onUploaded(e.target.files?.[0] ?? null, stage)}
                 />
               </label>
