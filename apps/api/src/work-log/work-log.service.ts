@@ -24,11 +24,13 @@ function toDateOnly(value: Date): string {
 }
 
 const ACTION_AUDIT: Record<string, string> = {
+  SUBMIT: "WORK_LOG.SUBMITTED",
   APPROVE: "WORK_LOG.APPROVED",
   REJECT: "WORK_LOG.REJECTED",
 };
 
-const ACTION_CAPABILITY: Record<string, "WORK_REVIEW"> = {
+const ACTION_CAPABILITY: Record<string, "WORK_CREATE" | "WORK_REVIEW"> = {
+  SUBMIT: "WORK_CREATE",
   APPROVE: "WORK_REVIEW",
   REJECT: "WORK_REVIEW",
 };
@@ -81,6 +83,8 @@ export class WorkLogService {
       description: workLog.description,
       staffCount: workLog.staffCount,
       challenges: workLog.challenges,
+      suggestedSolutions: workLog.suggestedSolutions,
+      truthConfirmed: workLog.truthConfirmed,
       status: workLog.status,
       version: workLog.version,
       submittedBy: workLog.submittedBy,
@@ -124,7 +128,9 @@ export class WorkLogService {
         description: input.description,
         staffCount: input.staffCount,
         challenges: input.challenges?.trim() || null,
-        status: "SUBMITTED",
+        suggestedSolutions: input.suggestedSolutions?.trim() || null,
+        truthConfirmed: input.truthConfirmed,
+        status: "DRAFT",
         submittedBy: auth.userId,
         detail: {
           create: {
@@ -149,7 +155,7 @@ export class WorkLogService {
     });
 
     await this.audit.record({
-      action: "WORK_LOG.SUBMITTED",
+      action: "WORK_LOG.DRAFT_CREATED",
       targetType: "WorkLog",
       targetId: workLog.id,
       scopeType: "WARD",
@@ -157,7 +163,7 @@ export class WorkLogService {
       actorUserId: auth.userId,
       sourceIp: meta.sourceIp,
       requestId: meta.requestId,
-      details: `${input.activity} ${input.completionStatus}`,
+      details: `${input.activity} ${input.completionStatus} truth-confirmed`,
     });
     return this.toSummary(workLog);
   }
@@ -166,7 +172,10 @@ export class WorkLogService {
 
   async list(auth: AuthContext, query: WorkLogQueryInput): Promise<Array<Record<string, unknown>>> {
     const wardIds = await this.accessibleWardIds(auth);
-    const where: Prisma.WorkLogWhereInput = { wardId: { in: wardIds } };
+    const where: Prisma.WorkLogWhereInput = {
+      wardId: { in: wardIds },
+      OR: [{ status: { not: "DRAFT" } }, { submittedBy: auth.userId }],
+    };
     if (query.wardId) {
       if (!wardIds.includes(query.wardId)) return [];
       where.wardId = query.wardId;
@@ -189,6 +198,9 @@ export class WorkLogService {
     if (!(await this.scope.wardAccessible(auth, workLog.wardId))) {
       throw new NotFoundException("Work log not found");
     }
+    if (workLog.status === "DRAFT" && workLog.submittedBy !== auth.userId) {
+      throw new NotFoundException("Work log not found");
+    }
     return this.toSummary(workLog);
   }
 
@@ -209,6 +221,9 @@ export class WorkLogService {
     if (!required || !auth.capabilities.includes(required)) {
       throw new ForbiddenException("You do not have permission for this action");
     }
+    if (input.action === "SUBMIT" && workLog.submittedBy !== auth.userId) {
+      throw new ForbiddenException("Only the officer who created the draft can submit it");
+    }
     if (workLog.version !== input.expectedVersion) {
       throw new ConflictException("Work log changed; reload it before taking action");
     }
@@ -226,14 +241,20 @@ export class WorkLogService {
 
     const updated = await this.prisma.client.$transaction(async (tx) => {
       await tx.$executeRaw`SELECT pg_advisory_xact_lock(hashtext(${`work-log:${id}`}))`;
+      if (input.action === "SUBMIT") {
+        const evidenceCount = await tx.evidence.count({ where: { workLogId: id } });
+        if (evidenceCount === 0) {
+          throw new BadRequestException("Upload at least one work photo before submitting");
+        }
+      }
       const result = await tx.workLog.updateMany({
         where: { id, version: input.expectedVersion, status: workLog.status },
         data: {
           status: next as WorkLogStatus,
           version: { increment: 1 },
-          reviewedBy: auth.userId,
-          reviewedAt: new Date(),
-          reviewNote: input.reviewNote.trim() || null,
+          reviewedBy: input.action === "SUBMIT" ? undefined : auth.userId,
+          reviewedAt: input.action === "SUBMIT" ? undefined : new Date(),
+          reviewNote: input.action === "SUBMIT" ? undefined : input.reviewNote.trim() || null,
         },
       });
       if (result.count === 0) {

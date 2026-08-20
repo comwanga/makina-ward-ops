@@ -64,7 +64,7 @@ describe("evidence (integration)", () => {
   let workLogId: string;
   let foreignWorkLogId: string;
 
-  async function createWorkLogRow(wardId: string): Promise<string> {
+  async function createWorkLogRow(wardId: string, submittedBy: string): Promise<string> {
     const row = await prisma.workLog.create({
       data: {
         wardId,
@@ -73,8 +73,8 @@ describe("evidence (integration)", () => {
         location: "Makina Market area",
         description: "Desilted open drains",
         staffCount: 5,
-        status: "SUBMITTED",
-        submittedBy: "test",
+        status: "DRAFT",
+        submittedBy,
         detail: { create: { completionStatus: "COMPLETE", outstandingWork: null } },
         operations: {
           create: {
@@ -130,7 +130,7 @@ describe("evidence (integration)", () => {
     await prisma.evidence.deleteMany();
     await prisma.workLog.deleteMany();
 
-    await createUserWithAssignment(prisma, {
+    const officerId = await createUserWithAssignment(prisma, {
       email: "officer@makina.test",
       password: PASSWORD,
       displayName: "Ward Officer",
@@ -151,7 +151,7 @@ describe("evidence (integration)", () => {
     });
     viewer = await login(app, "reviewer@makina.test", PASSWORD);
 
-    await createUserWithAssignment(prisma, {
+    const foreignOfficerId = await createUserWithAssignment(prisma, {
       email: "foreign@woodley.test",
       password: PASSWORD,
       displayName: "Woodley Officer",
@@ -161,8 +161,8 @@ describe("evidence (integration)", () => {
     });
     foreignOfficer = await login(app, "foreign@woodley.test", PASSWORD);
 
-    workLogId = await createWorkLogRow(makinaWard.id);
-    foreignWorkLogId = await createWorkLogRow(woodleyWard.id);
+    workLogId = await createWorkLogRow(makinaWard.id, officerId);
+    foreignWorkLogId = await createWorkLogRow(woodleyWard.id, foreignOfficerId);
   });
 
   it("uploads evidence and exposes it in the work log list", async () => {
@@ -193,12 +193,22 @@ describe("evidence (integration)", () => {
   });
 
   it("prohibits evidence mutation after terminal review", async () => {
+    const initial = await uploadPhoto(workLogId, officer, "BEFORE");
+    expect(initial.status).toBe(201);
+    const submitted = await api(app, {
+      method: "POST",
+      url: `/api/v1/work-logs/${workLogId}/actions`,
+      cookie: officer.cookie,
+      csrf: officer.csrf,
+      payload: { action: "SUBMIT", expectedVersion: 1 },
+    });
+    expect(submitted.statusCode).toBe(201);
     const approved = await api(app, {
       method: "POST",
       url: `/api/v1/work-logs/${workLogId}/actions`,
       cookie: viewer.cookie,
       csrf: viewer.csrf,
-      payload: { action: "APPROVE", expectedVersion: 1 },
+      payload: { action: "APPROVE", expectedVersion: 2 },
     });
     expect(approved.statusCode).toBe(201);
     const upload = await uploadPhoto(workLogId, officer, "AFTER");
@@ -213,6 +223,14 @@ describe("evidence (integration)", () => {
   it("streams downloaded evidence back to an authorized reader", async () => {
     const { body } = await uploadPhoto(workLogId, officer, "AFTER");
     const id = (body as Record<string, any>).id;
+    const submitted = await api(app, {
+      method: "POST",
+      url: `/api/v1/work-logs/${workLogId}/actions`,
+      cookie: officer.cookie,
+      csrf: officer.csrf,
+      payload: { action: "SUBMIT", expectedVersion: 1 },
+    });
+    expect(submitted.statusCode).toBe(201);
 
     const download = await api(app, {
       method: "GET",
@@ -221,6 +239,26 @@ describe("evidence (integration)", () => {
     });
     expect(download.statusCode).toBe(200);
     expect(download.headers["content-type"]).toContain("image/jpeg");
+  });
+
+  it("keeps draft evidence private to the submitting officer", async () => {
+    const { status, body } = await uploadPhoto(workLogId, officer, "BEFORE");
+    expect(status).toBe(201);
+    const evidenceId = (body as Record<string, any>).id;
+
+    const list = await api(app, {
+      method: "GET",
+      url: `/api/v1/evidence?workLogId=${workLogId}`,
+      cookie: viewer.cookie,
+    });
+    expect(list.statusCode).toBe(404);
+
+    const download = await api(app, {
+      method: "GET",
+      url: `/api/v1/evidence/${evidenceId}/download`,
+      cookie: viewer.cookie,
+    });
+    expect(download.statusCode).toBe(404);
   });
 
   it("requires WORK_CREATE to upload and WORK_READ to view", async () => {
@@ -287,7 +325,7 @@ describe("evidence (integration)", () => {
     const download = await api(app, {
       method: "GET",
       url: `/api/v1/evidence/${row.id}/download`,
-      cookie: viewer.cookie,
+      cookie: officer.cookie,
     });
     expect(download.statusCode).toBe(404);
   });
@@ -307,7 +345,7 @@ describe("evidence (integration)", () => {
     const download = await api(app, {
       method: "GET",
       url: `/api/v1/evidence/${row.id}/download`,
-      cookie: viewer.cookie,
+      cookie: officer.cookie,
     });
     expect(download.statusCode).toBe(404);
   });

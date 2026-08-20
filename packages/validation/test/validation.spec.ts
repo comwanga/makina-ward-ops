@@ -43,10 +43,15 @@ describe("createWorkLogSchema", () => {
     location: "Makina Market",
     areasRoads: "Mashinani Road",
     description: "Cleared blocked drainage",
+    truthConfirmed: true,
   };
 
   it("accepts a valid work log", () => {
     expect(createWorkLogSchema.parse(base).numberOfTrips).toBe(0);
+  });
+
+  it("requires the officer's truth confirmation", () => {
+    expect(() => createWorkLogSchema.parse({ ...base, truthConfirmed: false })).toThrow();
   });
 
   it("rejects an invalid truck identifier", () => {

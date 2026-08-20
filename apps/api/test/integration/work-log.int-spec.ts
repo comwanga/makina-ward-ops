@@ -38,6 +38,8 @@ function workLogPayload(wardId: string, overrides: Record<string, unknown> = {})
     description: "Desilted open drains along the market",
     staffCount: 12,
     challenges: "Rain delayed progress",
+    suggestedSolutions: "Schedule drainage work before forecast rainfall",
+    truthConfirmed: true,
     numberOfTrips: 0,
     wasteTransferInvolved: false,
     truckId: "",
@@ -115,25 +117,93 @@ describe("work operations (integration)", () => {
     payload: Record<string, unknown>,
     session: { cookie: string | null; csrf: string | null } = reviewer,
   ): Promise<{ status: number; body: unknown }> {
+    const expectedVersion = payload.expectedVersion ?? (
+      await prisma.workLog.findUniqueOrThrow({ where: { id }, select: { version: true } })
+    ).version;
     const response = await api(app, {
       method: "POST",
       url: `/api/v1/work-logs/${id}/actions`,
       cookie: session.cookie,
       csrf: session.csrf,
-      payload: { expectedVersion: 1, ...payload },
+      payload: { ...payload, expectedVersion },
     });
     return { status: response.statusCode, body: response.json() };
   }
 
-  it("creates a submitted work log with detail and operations", async () => {
+  async function attachEvidence(workLogId: string): Promise<void> {
+    await prisma.evidence.create({
+      data: {
+        workLogId,
+        objectKey: `test/${workLogId}.jpg`,
+        stage: "BEFORE",
+        contentType: "image/jpeg",
+        size: 128,
+        sha256: "a".repeat(64),
+        uploadedBy: "test",
+      },
+    });
+  }
+
+  async function createSubmittedWorkLog(payload: Record<string, unknown>) {
+    const draft = await createWorkLog(payload);
+    const id = (draft.body as Record<string, any>).id;
+    await attachEvidence(id);
+    const submitted = await action(id, { action: "SUBMIT" }, officer);
+    expect(submitted.status).toBe(201);
+    return submitted;
+  }
+
+  it("creates a truthful draft work log with detail and operations", async () => {
     const { status, body } = await createWorkLog(workLogPayload(makinaWard.id));
     expect(status).toBe(201);
     const workLog = body as Record<string, any>;
-    expect(workLog.status).toBe("SUBMITTED");
+    expect(workLog.status).toBe("DRAFT");
     expect(workLog.wardId).toBe(makinaWard.id);
     expect(workLog.activity).toBe("Drainage desilting");
     expect(workLog.detail.completionStatus).toBe("COMPLETE");
     expect(workLog.operations.areasRoads).toBe("Moktar Daddah Road");
+    expect(workLog.suggestedSolutions).toContain("forecast rainfall");
+    expect(workLog.truthConfirmed).toBe(true);
+  });
+
+  it("keeps a draft private until the submitting officer submits it", async () => {
+    const { body } = await createWorkLog(workLogPayload(makinaWard.id));
+    const id = (body as Record<string, any>).id;
+
+    const reviewerList = await api(app, {
+      method: "GET",
+      url: "/api/v1/work-logs",
+      cookie: reviewer.cookie,
+    });
+    expect(reviewerList.statusCode).toBe(200);
+    expect((reviewerList.json() as Array<{ id: string }>).some((item) => item.id === id)).toBe(false);
+
+    const hiddenDraft = await api(app, {
+      method: "GET",
+      url: `/api/v1/work-logs/${id}`,
+      cookie: reviewer.cookie,
+    });
+    expect(hiddenDraft.statusCode).toBe(404);
+
+    await attachEvidence(id);
+    expect((await action(id, { action: "SUBMIT" }, officer)).status).toBe(201);
+
+    const visibleSubmission = await api(app, {
+      method: "GET",
+      url: `/api/v1/work-logs/${id}`,
+      cookie: reviewer.cookie,
+    });
+    expect(visibleSubmission.statusCode).toBe(200);
+  });
+
+  it("requires photo evidence before the officer submits a draft", async () => {
+    const { body } = await createWorkLog(workLogPayload(makinaWard.id));
+    const id = (body as Record<string, any>).id;
+    expect((await action(id, { action: "SUBMIT" }, officer)).status).toBe(400);
+    await attachEvidence(id);
+    const submitted = await action(id, { action: "SUBMIT" }, officer);
+    expect(submitted.status).toBe(201);
+    expect((submitted.body as Record<string, any>).status).toBe("SUBMITTED");
   });
 
   it("records waste transfer operations", async () => {
@@ -209,7 +279,7 @@ describe("work operations (integration)", () => {
   });
 
   it("lets a subcounty reviewer approve a submitted work log", async () => {
-    const { body } = await createWorkLog(workLogPayload(makinaWard.id));
+    const { body } = await createSubmittedWorkLog(workLogPayload(makinaWard.id));
     const id = (body as Record<string, any>).id;
     const { status, body: result } = await action(id, { action: "APPROVE" });
     expect(status).toBe(201);
@@ -218,15 +288,15 @@ describe("work operations (integration)", () => {
   });
 
   it("rejects a stale work-log transition version", async () => {
-    const { body } = await createWorkLog(workLogPayload(makinaWard.id));
+    const { body } = await createSubmittedWorkLog(workLogPayload(makinaWard.id));
     const id = (body as Record<string, any>).id;
-    const stale = await action(id, { action: "APPROVE", expectedVersion: 2 });
+    const stale = await action(id, { action: "APPROVE", expectedVersion: 3 });
     expect(stale.status).toBe(409);
     expect((await prisma.workLog.findUniqueOrThrow({ where: { id } })).status).toBe("SUBMITTED");
   });
 
   it("rejects a submitted work log with a note", async () => {
-    const { body } = await createWorkLog(workLogPayload(makinaWard.id));
+    const { body } = await createSubmittedWorkLog(workLogPayload(makinaWard.id));
     const id = (body as Record<string, any>).id;
     const { status, body: result } = await action(
       id,
@@ -238,21 +308,21 @@ describe("work operations (integration)", () => {
   });
 
   it("requires a rejection note", async () => {
-    const { body } = await createWorkLog(workLogPayload(makinaWard.id));
+    const { body } = await createSubmittedWorkLog(workLogPayload(makinaWard.id));
     const id = (body as Record<string, any>).id;
     const { status } = await action(id, { action: "REJECT" });
     expect(status).toBe(400);
   });
 
   it("forbids a ward officer from approving (no WORK_REVIEW)", async () => {
-    const { body } = await createWorkLog(workLogPayload(makinaWard.id));
+    const { body } = await createSubmittedWorkLog(workLogPayload(makinaWard.id));
     const id = (body as Record<string, any>).id;
     const { status } = await action(id, { action: "APPROVE" }, officer);
     expect(status).toBe(403);
   });
 
   it("rejects a transition from a terminal status", async () => {
-    const { body } = await createWorkLog(workLogPayload(makinaWard.id));
+    const { body } = await createSubmittedWorkLog(workLogPayload(makinaWard.id));
     const id = (body as Record<string, any>).id;
     await action(id, { action: "APPROVE" });
     const { status } = await action(id, { action: "APPROVE" });

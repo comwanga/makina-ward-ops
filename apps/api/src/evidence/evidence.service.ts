@@ -90,8 +90,11 @@ export class EvidenceService {
     if (!(await this.scope.wardAccessible(auth, workLog.wardId))) {
       throw new NotFoundException("Work log not found");
     }
-    if (workLog.status !== "SUBMITTED") {
-      throw new ConflictException("Evidence cannot be changed after terminal review");
+    if (workLog.status === "DRAFT" && workLog.submittedBy !== auth.userId) {
+      throw new NotFoundException("Work log not found");
+    }
+    if (workLog.status !== "DRAFT") {
+      throw new ConflictException("Evidence can only be uploaded before the work log is submitted");
     }
 
     // §23 pipeline: signature validation, orientation normalization, resize,
@@ -107,8 +110,8 @@ export class EvidenceService {
       const evidence = await this.prisma.client.$transaction(async (tx) => {
         await tx.$executeRaw`SELECT pg_advisory_xact_lock(hashtext(${`work-log:${workLogId}`}))`;
         const current = await tx.workLog.findUnique({ where: { id: workLogId } });
-        if (!current || current.status !== "SUBMITTED") {
-          throw new ConflictException("Evidence cannot be changed after terminal review");
+        if (!current || current.status !== "DRAFT") {
+          throw new ConflictException("Evidence can only be uploaded before the work log is submitted");
         }
         const count = await tx.evidence.count({ where: { workLogId, stage } });
         if (count >= EVIDENCE_MAX_PER_STAGE) {
@@ -164,6 +167,9 @@ export class EvidenceService {
     if (!(await this.scope.wardAccessible(auth, workLog.wardId))) {
       throw new NotFoundException("Work log not found");
     }
+    if (workLog.status === "DRAFT" && workLog.submittedBy !== auth.userId) {
+      throw new NotFoundException("Work log not found");
+    }
 
     const evidence = await this.prisma.client.evidence.findMany({
       where: { workLogId, stage: query.stage },
@@ -188,6 +194,9 @@ export class EvidenceService {
       throw new NotFoundException("Evidence not found");
     }
     if (!(await this.scope.wardAccessible(auth, evidence.workLog.wardId))) {
+      throw new NotFoundException("Evidence not found");
+    }
+    if (evidence.workLog.status === "DRAFT" && evidence.workLog.submittedBy !== auth.userId) {
       throw new NotFoundException("Evidence not found");
     }
 

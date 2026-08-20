@@ -459,6 +459,28 @@ body {
   cursor: progress;
 }
 
+.conditional-fields {
+  grid-column: 1 / -1;
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(180px, 1fr));
+  gap: 12px;
+  padding: 14px;
+  border: 1px solid var(--line);
+  border-radius: 10px;
+  background: rgba(35, 91, 52, 0.035);
+}
+
+.conditional-fields legend {
+  padding: 0 6px;
+  color: var(--forest);
+  font-weight: 700;
+}
+
+.conditional-fields .muted-text {
+  grid-column: 1 / -1;
+  margin: 0;
+}
+
 .data-table {
   width: 100%;
   border-collapse: collapse;

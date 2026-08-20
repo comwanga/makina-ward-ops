@@ -15,6 +15,10 @@ export const createWorkLogSchema = z
     backhoeId: z.string().trim().toUpperCase().default(""),
     staffCount: z.coerce.number().int().min(0).default(0),
     challenges: z.string().trim().max(2000).optional().nullable(),
+    suggestedSolutions: z.string().trim().max(2000).optional().nullable(),
+    truthConfirmed: strictBooleanSchema.refine((value) => value, {
+      message: "Confirm that the submitted work-log information is true",
+    }),
     cleanupDone: strictBooleanSchema.default(false),
     cleanupStakeholders: z.string().trim().max(2000).default(""),
     climateTeamCount: z.coerce.number().int().min(0).default(0),
@@ -39,7 +43,7 @@ export const createWorkLogSchema = z
   });
 
 export const workLogActionSchema = z.object({
-  action: z.enum(["APPROVE", "REJECT"]),
+  action: z.enum(["SUBMIT", "APPROVE", "REJECT"]),
   expectedVersion: z.number().int().positive(),
   reviewNote: z.string().trim().max(2000).default(""),
 });
@@ -47,7 +51,7 @@ export const workLogActionSchema = z.object({
 export const workLogQuerySchema = optionalPaginationSchema.extend({
   wardId: idSchema.optional(),
   workDate: isoDateSchema.optional(),
-  status: z.enum(["SUBMITTED", "APPROVED", "REJECTED"]).optional(),
+  status: z.enum(["DRAFT", "SUBMITTED", "APPROVED", "REJECTED"]).optional(),
 });
 
 export type CreateWorkLogInput = z.infer<typeof createWorkLogSchema>;

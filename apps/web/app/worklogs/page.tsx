@@ -46,10 +46,9 @@ export default function WorkLogsPage() {
     workDate: nairobiToday(),
     activity: "",
     location: "",
-    areasRoads: "",
-    description: "",
     staffCount: 0,
     challenges: "",
+    suggestedSolutions: "",
     numberOfTrips: 0,
     wasteTransferInvolved: false,
     truckId: "",
@@ -59,7 +58,11 @@ export default function WorkLogsPage() {
     climateTeamCount: 0,
     completionStatus: "COMPLETE" as CompletionStatus,
     outstandingWork: "",
+    truthConfirmed: false,
   });
+  const [evidenceFiles, setEvidenceFiles] = useState<Partial<Record<EvidenceStage, File>>>({});
+  const [truckUsed, setTruckUsed] = useState(false);
+  const [backhoeUsed, setBackhoeUsed] = useState(false);
 
   const can = (capability: string) => me?.capabilities.includes(capability) ?? false;
 
@@ -159,24 +162,69 @@ export default function WorkLogsPage() {
     event.preventDefault();
     setError(null);
     setNotice(null);
+    const selectedPhotos = STAGES.flatMap((stage) => {
+      const file = evidenceFiles[stage];
+      return file ? [{ stage, file }] : [];
+    });
+    if (selectedPhotos.length === 0) {
+      setError("Select at least one work photo from your gallery or camera.");
+      return;
+    }
     setSubmitting(true);
+    let draft: WorkLog | null = null;
     try {
-      const created = await createWorkLog(form);
-      setNotice(`Logged ${created.activity} for ${formatDate(created.workDate)}.`);
+      draft = await createWorkLog({
+        ...form,
+        description: form.activity,
+        areasRoads: form.location,
+        numberOfTrips: form.wasteTransferInvolved ? form.numberOfTrips : 0,
+        truckId: form.wasteTransferInvolved && truckUsed ? form.truckId : "",
+        backhoeId: form.wasteTransferInvolved && backhoeUsed ? form.backhoeId : "",
+        cleanupStakeholders: form.cleanupDone ? form.cleanupStakeholders : "",
+        climateTeamCount: form.cleanupDone ? form.climateTeamCount : 0,
+      });
+      for (const { stage, file } of selectedPhotos) {
+        setUploading(`${draft.id}:${stage}`);
+        setUploadProgress(0);
+        const prepared = await compressImage(file);
+        await uploadEvidence(draft.id, prepared, stage, "", setUploadProgress);
+      }
+      const submitted = await workLogAction(draft.id, {
+        action: "SUBMIT",
+        expectedVersion: draft.version,
+      });
+      setNotice(`Submitted ${submitted.activity} for ${formatDate(submitted.workDate)}.`);
       setForm((current) => ({
         ...current,
         activity: "",
         location: "",
-        areasRoads: "",
-        description: "",
+        staffCount: 0,
         challenges: "",
+        suggestedSolutions: "",
+        numberOfTrips: 0,
+        wasteTransferInvolved: false,
+        truckId: "",
+        backhoeId: "",
+        cleanupDone: false,
         cleanupStakeholders: "",
+        climateTeamCount: 0,
+        completionStatus: "COMPLETE",
         outstandingWork: "",
+        truthConfirmed: false,
       }));
+      setEvidenceFiles({});
+      setTruckUsed(false);
+      setBackhoeUsed(false);
       setWorkLogs(await listWorkLogs());
     } catch (err) {
+      if (draft) {
+        setNotice("The work log remains a draft. Resolve the photo error, then submit it below.");
+        setWorkLogs(await listWorkLogs().catch(() => workLogs));
+      }
       setError(apiErrorMessage(err, "Unable to create work log"));
     } finally {
+      setUploading(null);
+      setUploadProgress(null);
       setSubmitting(false);
     }
   }
@@ -186,8 +234,9 @@ export default function WorkLogsPage() {
     setNotice(null);
     setPendingAction(null);
     try {
-      await workLogAction(workLog.id, { action, reviewNote });
-      setNotice(`${workLog.activity} ${action === "APPROVE" ? "approved" : "rejected"}.`);
+      await workLogAction(workLog.id, { action, expectedVersion: workLog.version, reviewNote });
+      const verb = action === "SUBMIT" ? "submitted" : action === "APPROVE" ? "approved" : "rejected";
+      setNotice(`${workLog.activity} ${verb}.`);
       setWorkLogs(await listWorkLogs());
     } catch (err) {
       setError(apiErrorMessage(err, "Unable to update work log"));
@@ -196,6 +245,9 @@ export default function WorkLogsPage() {
 
   const actionsFor = (workLog: WorkLog) => {
     const actions: Array<{ action: WorkLogAction; label: string; capability: string }> = [];
+    if (workLog.status === "DRAFT") {
+      actions.push({ action: "SUBMIT", label: "Submit", capability: "WORK_CREATE" });
+    }
     if (workLog.status === "SUBMITTED") {
       actions.push({ action: "APPROVE", label: "Approve", capability: "WORK_REVIEW" });
       actions.push({ action: "REJECT", label: "Reject", capability: "WORK_REVIEW" });
@@ -245,7 +297,7 @@ export default function WorkLogsPage() {
               />
             </label>
             <label>
-              Activity
+              Activity / description
               <input
                 value={form.activity}
                 onChange={(e) => setForm({ ...form, activity: e.target.value })}
@@ -254,28 +306,11 @@ export default function WorkLogsPage() {
               />
             </label>
             <label>
-              Location
+              Location / areas or roads covered
               <input
                 value={form.location}
                 onChange={(e) => setForm({ ...form, location: e.target.value })}
                 placeholder="e.g. Makina Market area"
-                required
-              />
-            </label>
-            <label>
-              Areas / roads covered
-              <input
-                value={form.areasRoads}
-                onChange={(e) => setForm({ ...form, areasRoads: e.target.value })}
-                required
-              />
-            </label>
-            <label>
-              Description
-              <textarea
-                value={form.description}
-                onChange={(e) => setForm({ ...form, description: e.target.value })}
-                rows={3}
                 required
               />
             </label>
@@ -292,76 +327,60 @@ export default function WorkLogsPage() {
             </label>
             <label>
               Challenges
-              <input
+              <textarea
                 value={form.challenges}
                 onChange={(e) => setForm({ ...form, challenges: e.target.value })}
+                rows={2}
               />
             </label>
             <label>
-              Number of trips
-              <input
-                type="number"
-                min={0}
-                value={form.numberOfTrips}
-                onChange={(e) =>
-                  setForm({ ...form, numberOfTrips: Number(e.target.value) })
-                }
+              Suggested solutions to challenges
+              <textarea
+                value={form.suggestedSolutions}
+                onChange={(e) => setForm({ ...form, suggestedSolutions: e.target.value })}
+                rows={2}
               />
             </label>
             <label className="inline-label">
               <input
                 type="checkbox"
                 checked={form.wasteTransferInvolved}
-                onChange={(e) =>
-                  setForm({ ...form, wasteTransferInvolved: e.target.checked })
-                }
+                onChange={(e) => {
+                  const checked = e.target.checked;
+                  setForm({ ...form, wasteTransferInvolved: checked, numberOfTrips: checked ? 1 : 0, truckId: checked ? form.truckId : "", backhoeId: checked ? form.backhoeId : "" });
+                  if (!checked) {
+                    setTruckUsed(false);
+                    setBackhoeUsed(false);
+                  }
+                }}
               />
               Waste transfer involved
             </label>
-            <label>
-              Truck ID
-              <input
-                value={form.truckId}
-                onChange={(e) => setForm({ ...form, truckId: e.target.value })}
-                placeholder="T-161"
-              />
-            </label>
-            <label>
-              Backhoe ID
-              <input
-                value={form.backhoeId}
-                onChange={(e) => setForm({ ...form, backhoeId: e.target.value })}
-                placeholder="BH13"
-              />
-            </label>
+            {form.wasteTransferInvolved && (
+              <fieldset className="conditional-fields">
+                <legend>Waste transfer details</legend>
+                <label>Number of trips<select value={form.numberOfTrips} onChange={(e) => setForm({ ...form, numberOfTrips: Number(e.target.value) })}>{Array.from({ length: 20 }, (_, index) => index + 1).map((count) => <option key={count} value={count}>{count}</option>)}</select></label>
+                <label className="inline-label"><input type="checkbox" checked={truckUsed} onChange={(e) => { setTruckUsed(e.target.checked); if (!e.target.checked) setForm({ ...form, truckId: "" }); }} />Truck used</label>
+                {truckUsed && <label>Truck ID<input value={form.truckId} onChange={(e) => setForm({ ...form, truckId: e.target.value })} placeholder="T-161" required /></label>}
+                <label className="inline-label"><input type="checkbox" checked={backhoeUsed} onChange={(e) => { setBackhoeUsed(e.target.checked); if (!e.target.checked) setForm({ ...form, backhoeId: "" }); }} />Backhoe used</label>
+                {backhoeUsed && <label>Backhoe ID<input value={form.backhoeId} onChange={(e) => setForm({ ...form, backhoeId: e.target.value })} placeholder="BH13" required /></label>}
+              </fieldset>
+            )}
             <label className="inline-label">
               <input
                 type="checkbox"
                 checked={form.cleanupDone}
-                onChange={(e) => setForm({ ...form, cleanupDone: e.target.checked })}
+                onChange={(e) => setForm({ ...form, cleanupDone: e.target.checked, cleanupStakeholders: e.target.checked ? form.cleanupStakeholders : "", climateTeamCount: e.target.checked ? form.climateTeamCount : 0 })}
               />
               Cleanup done
             </label>
-            <label>
-              Cleanup stakeholders
-              <input
-                value={form.cleanupStakeholders}
-                onChange={(e) =>
-                  setForm({ ...form, cleanupStakeholders: e.target.value })
-                }
-              />
-            </label>
-            <label>
-              Climate works team count
-              <input
-                type="number"
-                min={0}
-                value={form.climateTeamCount}
-                onChange={(e) =>
-                  setForm({ ...form, climateTeamCount: Number(e.target.value) })
-                }
-              />
-            </label>
+            {form.cleanupDone && (
+              <fieldset className="conditional-fields">
+                <legend>Cleanup details</legend>
+                <label>Cleanup stakeholders<input value={form.cleanupStakeholders} onChange={(e) => setForm({ ...form, cleanupStakeholders: e.target.value })} /></label>
+                <label>Climate Works team count<input type="number" min={0} value={form.climateTeamCount} onChange={(e) => setForm({ ...form, climateTeamCount: Number(e.target.value) })} /></label>
+              </fieldset>
+            )}
             <label>
               Completion
               <select
@@ -386,8 +405,20 @@ export default function WorkLogsPage() {
                 placeholder="Describe outstanding work if incomplete"
               />
             </label>
+            <fieldset className="conditional-fields">
+              <legend>Photo evidence before submission</legend>
+              <p className="muted-text">Choose an existing gallery photo or use your device camera. At least one photo is required.</p>
+              {STAGES.map((stage) => (
+                <label key={stage}>{stage.toLowerCase()} photo<input type="file" accept="image/jpeg,image/png" onChange={(e) => { const file = e.target.files?.[0]; setEvidenceFiles((current) => ({ ...current, [stage]: file })); }} />{evidenceFiles[stage] && <span className="muted-text">{evidenceFiles[stage]?.name}</span>}</label>
+              ))}
+              {uploading && uploadProgress !== null && <p className="muted-text">Uploading photo: {uploadProgress}%</p>}
+            </fieldset>
+            <label className="inline-label">
+              <input type="checkbox" checked={form.truthConfirmed} onChange={(e) => setForm({ ...form, truthConfirmed: e.target.checked })} required />
+              I confirm that this work-log information and its photos are true and accurate.
+            </label>
             <button type="submit" disabled={submitting}>
-            {submitting ? "Saving..." : "Submit work log"}
+            {submitting ? "Uploading photos and submitting..." : "Submit work log"}
             </button>
           </form>
         </section>
@@ -436,7 +467,7 @@ export default function WorkLogsPage() {
                     {can("WORK_READ") && (
                       <EvidenceCell
                         evidence={evidenceByWorkLog[workLog.id] ?? []}
-                        canUpload={can("WORK_CREATE") && workLog.status === "SUBMITTED"}
+                        canUpload={can("WORK_CREATE") && workLog.status === "DRAFT"}
                         onOpen={onOpenEvidence}
                         onUploaded={(file, stage) => void onUploadEvidence(workLog, file, stage)}
                         uploadingStage={uploading?.startsWith(`${workLog.id}:`) ? uploading.split(":")[1] : null}
@@ -451,7 +482,7 @@ export default function WorkLogsPage() {
                           key={item.action}
                           className="link-btn"
                           type="button"
-                          onClick={() => setPendingAction({ workLog, action: item.action })}
+                          onClick={() => item.action === "SUBMIT" ? void onAction(workLog, item.action) : setPendingAction({ workLog, action: item.action })}
                         >
                           {item.label}
                         </button>
@@ -519,7 +550,6 @@ function EvidenceCell({
                 <input
                   type="file"
                   accept="image/jpeg,image/png"
-                  capture="environment"
                   className="visually-hidden"
                   disabled={uploadingStage !== null}
                   onChange={(e) => onUploaded(e.target.files?.[0] ?? null, stage)}

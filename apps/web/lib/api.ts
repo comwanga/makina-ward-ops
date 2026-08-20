@@ -747,6 +747,8 @@ export interface WorkLog {
   description: string;
   staffCount: number;
   challenges: string | null;
+  suggestedSolutions: string | null;
+  truthConfirmed: boolean;
   status: WorkLogStatus;
   version: number;
   submittedBy: string;
@@ -771,6 +773,8 @@ export interface CreateWorkLogInput {
   backhoeId?: string;
   staffCount?: number;
   challenges?: string | null;
+  suggestedSolutions?: string | null;
+  truthConfirmed: boolean;
   cleanupDone?: boolean;
   cleanupStakeholders?: string;
   climateTeamCount?: number;
@@ -797,7 +801,7 @@ export async function createWorkLog(input: CreateWorkLogInput): Promise<WorkLog>
 
 export async function workLogAction(
   id: string,
-  input: { action: WorkLogAction; reviewNote?: string },
+  input: { action: WorkLogAction; expectedVersion: number; reviewNote?: string },
 ): Promise<WorkLog> {
   return apiFetch<WorkLog>(`/work-logs/${id}/actions`, {
     method: "POST",

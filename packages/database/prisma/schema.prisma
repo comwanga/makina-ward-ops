@@ -99,6 +99,7 @@ enum AbsenceStatus {
 }
 
 enum WorkLogStatus {
+  DRAFT
   SUBMITTED
   APPROVED
   REJECTED
@@ -459,7 +460,9 @@ model WorkLog {
   description String
   staffCount  Int               @default(0)
   challenges  String?
-  status      WorkLogStatus     @default(SUBMITTED)
+  suggestedSolutions String?
+  truthConfirmed Boolean           @default(false)
+  status      WorkLogStatus     @default(DRAFT)
   version     Int               @default(1)
   submittedBy String
   reviewedBy  String?
